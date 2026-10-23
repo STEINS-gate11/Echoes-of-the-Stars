@@ -1,0 +1,27 @@
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.aps
+*.pdb
+*.ilk
+*.idb
+*.obj
+*.tlog
+*.log
+*.lastbuildstate
+*.unsuccessfulbuild
+
+# 构建输出
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+*.exe
+*.lib
+*.exp
+
+# 临时文件
+NUL
+NUL.obj
+_build_check.bat

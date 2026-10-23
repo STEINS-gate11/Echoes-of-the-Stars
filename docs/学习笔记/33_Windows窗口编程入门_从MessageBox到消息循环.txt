@@ -1,0 +1,1066 @@
+============================================================
+学习笔记 33 · Windows 窗口编程入门 · 从 MessageBox 到消息循环
+============================================================
+
+【日期】2026-08-08
+【关键词】Windows API · 句柄 HWND · 宏 · 函数指针 · WNDCLASSA
+          CreateWindowA · 消息循环 · 窗口过程 · WM_DESTROY
+【为什么学这个】24 张 CG 要显示。控制台贴不了图，必须开一个真窗口。
+
+
+============================================================
+零、先搞清楚一件事：这些不是 C 语言
+============================================================
+
+  刚看到 CreateWindowW、HDC、BitBlt 会觉得"我 C 语言没学好"。
+  不是。这些东西根本不属于 C 语言。
+
+    ┌───────────────────────────────────────────────┐
+    │ if / while / int / return / struct / 指针      │ ← C 语言本身
+    │ malloc / free / printf / strcpy                │ ← C 标准库
+    │ CreateWindowA / HDC / BitBlt / SelectObject    │ ← Windows 提供的库
+    └───────────────────────────────────────────────┘
+
+  第三行和第二行是同一种东西：别人写好的函数，你调用它。
+
+  区别只有两个：
+    1. 数量多 —— 几千个，没人背得下来，都是查文档
+    2. 参数多 —— printf 一两个参数，CreateWindowA 十一个
+
+  ★ 参数多 ≠ 概念深。
+
+      int f(int a);
+      int g(int a,int b,int c,int d,int e,int f,int g,int h);
+
+    后者不比前者深，只是烦。
+
+  【已经在用了，只是不知道名字】
+
+    源.cpp 第 5 行就有：
+
+      #include <windows.h>
+
+    因为 gotoxy / setColor / hideCursor / PlaySoundA
+    全都是 Windows API：
+
+      void gotoxy(int x, int y) {
+          COORD pos = { (SHORT)x, (SHORT)y };
+          SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), pos);
+      }
+
+    COORD 是 Windows 的结构体。
+    SetConsoleCursorPosition 是 Windows 的函数。
+    GetStdHandle 返回的是句柄。
+
+    ★ 已经写了 3000 行 Windows 程序了，只是一直以为那是"C 语言"。
+
+
+============================================================
+一、第一个程序：8 行弹一个对话框
+============================================================
+
+    #include <windows.h>
+
+    int main(void)
+    {
+        MessageBoxA(NULL, "你好", "标题", MB_OK);
+        return 0;
+    }
+
+  跑起来：弹出一个小框，写着"你好"，标题栏"标题"，一个"确定"按钮。
+
+  【逐字拆】
+
+  #include <windows.h>
+
+    跟 #include <stdio.h> 完全一样的东西。
+
+      <stdio.h>   里有 printf / scanf 的声明
+      <windows.h> 里有几千个 Windows 函数的声明
+
+    "声明" = 告诉编译器"有这么个函数、吃几个参数、返回什么"。
+
+  MessageBoxA(NULL, "你好", "标题", MB_OK);
+
+    参数表：
+
+      位置  值        意思
+      ────────────────────────────────────────────
+       1    NULL      这个框属于哪个窗口。NULL = 不属于谁
+       2    "你好"    框里显示的内容
+       3    "标题"    标题栏的字
+       4    MB_OK     要什么按钮。MB_OK = 只要一个"确定"
+
+  【返回值】
+
+    MessageBoxA 会返回你点了哪个按钮：
+
+      int r = MessageBoxA(NULL, "要保存吗？", "问一下", MB_YESNO);
+      if (r == IDYES) printf("你点了是\n");
+      else            printf("你点了否\n");
+
+    MB_YESNO      → 两个按钮"是/否"
+    IDYES / IDNO  → 返回值
+
+
+============================================================
+二、A / W 后缀 —— 为什么函数名末尾有个字母
+============================================================
+
+  Windows 里很多函数有两个版本：
+
+    MessageBoxA(...)      A = ANSI，吃 char*      →  "你好"
+    MessageBoxW(...)      W = Wide，吃 wchar_t*   →  L"你好"
+
+  ★ 规则一条：
+      字符串是  "xxx" → 用 A 版
+      字符串是 L"xxx" → 用 W 版
+
+  【项目里的例子】
+
+    PlaySoundA(file, NULL, ...)          ← A 版，因为 file 是 char*
+    WriteConsoleW(..., s, ...)           ← W 版，因为 s 是 wchar_t*
+    （printemoji 里面那个）
+
+    ★ 这个规律早就在用了。
+
+  【为什么有两套】
+
+    历史原因。
+    老程序用 char*，一个中文占 2 个 char，算长度很麻烦。
+    后来加了 wchar_t*，一个中文一个 wchar_t，好数。
+
+    项目为了中文全用 L"..."，所以实际上一直在用 W 那一套。
+    （详见笔记 07、26）
+
+
+============================================================
+三、那一堆大写的名字 —— 全是宏，全是数字
+============================================================
+
+  MB_OK、WS_POPUP、SW_SHOW、SRCCOPY、WM_PAINT、VK_SPACE ……
+  Windows 里几千个这种 XX_XXXX 的大写名字。
+
+  ★ 它们全都只是数字的别名。
+
+      #define MB_OK  0
+
+  不信可以换成数字：
+
+      MessageBoxA(NULL, "你好", "标题", 0);      // 一模一样的效果
+
+  【这个认识很重要】
+
+    后面会遇到一大堆 WS_OVERLAPPEDWINDOW、CLEARTYPE_QUALITY、
+    OUT_TT_PRECIS，看着吓人。
+    知道"它们只是数字"，心里就不慌了 —— 大部分是照抄的常量。
+
+  【用 | 把宏拼起来 = 一堆开关】
+
+      DWORD st = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
+
+    竖线是按位或（C 课上的位运算）。
+    每个 WS_xxx 占一个二进制位，代表一个开关：
+
+      WS_CAPTION     有标题栏
+      WS_SYSMENU     有关闭按钮
+      WS_THICKFRAME  边框能拖着改大小
+      WS_MINIMIZEBOX 有最小化按钮
+      WS_MAXIMIZEBOX 有最大化按钮
+
+    算一下：
+      WS_CAPTION  = 0x00C00000
+      WS_SYSMENU  = 0x00080000
+      两个一 or   = 0x00C80000     ← 两个开关都开了
+
+    WS_OVERLAPPEDWINDOW 就是好几个 or 在一起的现成组合：
+
+      #define WS_OVERLAPPEDWINDOW  (WS_OVERLAPPED | WS_CAPTION | \
+                                    WS_SYSMENU | WS_THICKFRAME | \
+                                    WS_MINIMIZEBOX | WS_MAXIMIZEBOX)
+
+    ★ "一个整数当一堆开关用" —— Windows API 的标准套路，到处都是。
+
+
+============================================================
+四、句柄 HWND —— 号码牌，不是东西本身
+============================================================
+
+  【已经会的：指针】
+
+    conver_node* node = (conver_node*)malloc(sizeof(conver_node));
+    node->cur_chapter = 3;         // 直接改里面的东西
+    free(node);
+    node = NULL;                   // ← 这个纪律已经养成了
+
+    指针是内存地址。内存是自己的，*p 想看就看，p+1 想算就算。
+
+  【新的：句柄】
+
+    HWND hwnd = CreateWindowA(...);
+
+    HWND 也是"指向某个东西的标识"，但：
+
+      hwnd->width = 800;      ✗ 错，不能这么用
+      *hwnd = ...;            ✗ 错
+      hwnd + 1                ✗ 错
+
+    因为那个窗口对象在【操作系统里】，不在自己的内存里。碰不到。
+    手上只有一个编号。
+
+  ★ 句柄 = 号码牌。所有操作都是"拿号去请系统办事"：
+
+      ShowWindow(hwnd, SW_SHOW);          // 系统，显示 hwnd 号窗口
+      DestroyWindow(hwnd);                // 系统，销毁 hwnd 号窗口
+      SetWindowTextA(hwnd, "新标题");     // 系统，改 hwnd 号窗口的标题
+
+  ★ 句式固定：函数(句柄, 其他参数...)  —— 句柄永远第一个参数。
+
+  【为什么这么设计】
+
+    窗口是系统资源，不是你的。
+    系统要管所有程序的窗口，不能让任何一个程序直接改内存
+    —— 写错一个指针就能把别人的窗口搞坏。
+
+    给个编号，只能通过它提供的函数操作 = 一道防火墙。
+
+  【H 开头的都是句柄】
+
+    HWND      窗口
+    HDC       画布（见笔记 34）
+    HBITMAP   位图
+    HFONT     字体
+    HBRUSH    画刷
+    HANDLE    通用句柄（文件、进程…）
+
+  【项目里早就在用】
+
+    void setColor(int c) {
+        SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), (WORD)c);
+        //                       ↑ 这就是"标准输出"的句柄，也在第一个参数
+    }
+
+    ★ 句式一模一样。
+
+  【一条纪律：句柄销毁后不会自动变 NULL】
+
+      DestroyWindow(hwnd);
+      // hwnd 现在是个废号，但值还在！
+      if (hwnd) { ... }         // ← 判断为真，然后拿废号办事 = 出错
+
+    所以要手动：
+
+      if (hwnd) { DestroyWindow(hwnd); hwnd = NULL; }
+
+    ★ 和 free(node); node = NULL; 一字不差的道理。
+
+
+============================================================
+五、函数指针 —— 整个窗口编程唯一的新语法
+============================================================
+
+  ★ 这一节是唯一 C 课上没讲的语法。就这一个。
+
+  【已经会的规则：数组名不加下标 = 首元素地址】
+
+      int arr[10];
+      int *p = arr;              // 不用写 &arr[0]
+
+  【同样的规则：函数名不加括号 = 函数的地址】
+
+      void hello(void) { printf("hi\n"); }
+
+      hello();                   // 加括号   = 调用它
+      hello                      // 不加括号 = 它的地址
+
+  【怎么存一个函数的地址】
+
+      void (*fp)(void);
+
+    读法从里往外：
+      ① fp                —— 名字
+      ② (*fp)             —— 它是个指针
+      ③ (*fp)(void)       —— 指向的东西吃 void 参数 → 是个函数
+      ④ void (*fp)(void)  —— 那个函数返回 void
+
+    用起来：
+
+      void (*fp)(void);
+      fp = hello;              // 存进去（不加括号！）
+      fp();                    // 调用 —— 效果和 hello() 完全一样
+
+    有参数有返回值的：
+
+      int add(int a, int b) { return a + b; }
+
+      int (*calc)(int, int);   // 指向"吃两个 int、返回 int"的函数
+      calc = add;
+      printf("%d", calc(3, 4));   // 7
+
+  ★★ 那两个括号 (*fp) 必须有，少了就是完全不同的东西：
+
+      int (*f)(int);      // f 是【指针】，指向"返回 int 的函数"
+      int *g(int);        // g 是【函数】，返回 int*
+
+  【有什么用：把"要做什么"当参数传出去】
+
+    void for_each(int *arr, int n, void (*action)(int))
+    {
+        for (int i = 0; i < n; i++)
+            action(arr[i]);          // 具体做什么，调用方决定
+    }
+
+    void show(int x) { printf("%d ", x); }
+    void sq(int x)   { printf("%d ", x * x); }
+
+    int a[3] = { 1, 2, 3 };
+    for_each(a, 3, show);    // 1 2 3
+    for_each(a, 3, sq);      // 1 4 9
+
+    for_each 只管遍历，不管做什么。
+
+  【Windows 为什么需要它】
+
+    造窗口时要先告诉 Windows：
+
+      "以后这个窗口有事，你回头调用【我这个函数】。"
+
+      wc.lpfnWndProc = MyProc;      // 把电话号码留给 Windows
+
+    这种"留个函数给别人、别人回头调你"的模式叫【回调 callback】。
+    CALLBACK 这个宏就是这个意思。
+
+
+============================================================
+六、造一个窗口：三步
+============================================================
+
+    #include <windows.h>
+
+    int main(void)
+    {
+        /* ── 第 1 步：登记"我要造哪种窗口" ── */
+        WNDCLASSA wc = { 0 };
+        wc.lpfnWndProc   = DefWindowProcA;
+        wc.hInstance     = GetModuleHandleA(NULL);
+        wc.lpszClassName = "MyWin";
+        wc.hbrBackground = (HBRUSH)GetStockObject(GRAY_BRUSH);
+        RegisterClassA(&wc);
+
+        /* ── 第 2 步：造 ── */
+        HWND hwnd = CreateWindowA("MyWin", "我的窗口",
+            WS_OVERLAPPEDWINDOW,
+            100, 100, 600, 400,
+            NULL, NULL, wc.hInstance, NULL);
+
+        /* ── 第 3 步：显示 ── */
+        ShowWindow(hwnd, SW_SHOW);
+
+        /* ── 第 4 步：别让程序立刻结束 ── */
+        MessageBoxA(NULL, "窗口在那儿。点确定就退出。", "看", MB_OK);
+
+        return 0;
+    }
+
+  ────────────────────────────────────────────
+  第 1 步 · WNDCLASSA 就是一个结构体
+  ────────────────────────────────────────────
+
+    WNDCLASSA wc = { 0 };
+
+    WNDCLASSA 跟自己写的 conver_node 没有任何区别：
+
+      struct conver_node {
+          conver_node* prev;
+          conver_node* next;
+          const wchar_t* name;
+          ...
+      };
+
+    只不过 WNDCLASSA 是 windows.h 里定义好的，有 10 个字段。
+
+  ★ = { 0 } 是全部字段清零，【不能省】。
+
+    因为它有 10 个字段，只填 4 个。
+    剩下 6 个不清零就是栈上的垃圾值 —— RegisterClassA 拿垃圾值去用，
+    行为不可预测。
+
+    等价写法：memset(&wc, 0, sizeof(wc));
+
+  四个字段：
+
+    wc.lpszClassName = "MyWin";
+        给这类窗口起个名字，随便起。
+        第 2 步造窗口时要用同一个名字找它。
+
+    wc.hbrBackground = (HBRUSH)GetStockObject(GRAY_BRUSH);
+        背景刷成灰色。
+        GetStockObject = 从系统的公共库存里拿一个东西。
+        还有 BLACK_BRUSH / WHITE_BRUSH。
+        前面那个 (HBRUSH) 是强制类型转换 —— 它返回的是通用类型 HGDIOBJ。
+
+    wc.hInstance = GetModuleHandleA(NULL);
+        "我是哪个程序"。GetModuleHandleA(NULL) 就是"我自己"。
+        ★ 永远这么填，不用理解。
+
+    wc.lpfnWndProc = DefWindowProcA;
+        ★ 核心。这里填了一个函数名（不加括号），
+          意思是"这个窗口有事的时候，调用这个函数"。
+          DefWindowProcA 是 Windows 自带的默认处理函数，先偷懒用它。
+          （第 8 节换成自己写的）
+
+    RegisterClassA(&wc);
+        把这张表交给 Windows 登记。
+        传 &wc 是地址 —— 结构体大，按值传要整个拷一遍。
+        （链表里到处 conver_node* 是同一个理由）
+
+  ────────────────────────────────────────────
+  第 2 步 · CreateWindowA 的 11 个参数
+  ────────────────────────────────────────────
+
+    只需要认得 7 个，后 4 个照抄：
+
+      #    值                     意思
+      ──────────────────────────────────────────────────
+      1    "MyWin"                用哪个登记过的窗口类
+                                  （必须和 lpszClassName 一样）
+      2    "我的窗口"             标题栏的字
+      3    WS_OVERLAPPEDWINDOW    窗口长什么样（见第 3 节）
+      4    100                    左上角 x
+      5    100                    左上角 y
+      6    600                    宽
+      7    400                    高
+      8~11 NULL,NULL,wc.hInstance,NULL   ★ 照抄
+
+    ★ 4~7 这四个数是唯一需要调的。改了重跑，看位置和大小变化。
+
+    【实验】把第 3 个参数换成 WS_POPUP
+      → 窗口变成没标题栏、没边框的裸方块。
+      （跑完记得换回来，不然点不了叉）
+
+  ────────────────────────────────────────────
+  第 3 步 · ShowWindow
+  ────────────────────────────────────────────
+
+    ShowWindow(hwnd, SW_SHOW);
+
+    ★ CreateWindowA 造出来的窗口默认是【隐藏】的，这一句让它显示。
+
+    还有：
+      SW_HIDE       藏起来
+      SW_MINIMIZE   最小化
+      SW_MAXIMIZE   最大化
+
+  ────────────────────────────────────────────
+  第 4 步 · 为什么要加个对话框
+  ────────────────────────────────────────────
+
+    把 MessageBoxA 那行删掉 → 程序一闪就没了，根本看不见窗口。
+
+    因为 main 返回 = 程序结束 = 所有窗口跟着销毁。
+    造完窗口如果不做别的事，return 0 立刻就到了。
+
+    所以要有个东西卡住。这里先偷懒用 MessageBoxA（它会等你点确定）。
+    真正的做法是消息循环 —— 见第 8 节。
+
+
+============================================================
+七、★ 一个反直觉的发现：为什么窗口居然能拖动
+============================================================
+
+  【现象】
+
+    上面那个程序，只有 MessageBoxA 卡着，没写消息循环。
+    但是窗口能拖动、能改大小、遮挡后能恢复。
+
+  【原因】MessageBoxA 内部自带一个消息循环。
+
+    对话框弹着的时候它没闲着 —— 它在自己的内部循环里不停地
+    GetMessage / DispatchMessage。
+
+    ★ 而消息队列是【整个线程共用一个】，不是每个窗口一个。
+
+    所以它抽消息的时候，hwnd 那个窗口的消息【也一起被抽走、派发了】。
+    派发给 DefWindowProcA，于是拖动、改大小、重画全都正常。
+
+    ★ 替你干活的人是 MessageBoxA，不是"不需要有人干活"。
+
+  【用这个实验证明】
+
+    把第 4 步换成：
+
+      Sleep(10000);          // 干等 10 秒，什么都不做
+
+    在这 10 秒里试：
+      · 拖标题栏             → 拖不动
+      · 用别的窗口盖住再移开 → 那块不恢复
+      · 鼠标放上去           → 转圈
+      · 等两三秒             → 标题栏变成"我的窗口（无响应）"
+
+    Sleep 和 MessageBoxA 的区别就是：
+      一个纯粹在睡，一个在睡的同时替你抽消息。
+
+  ★★ 所以规则要精确表述：
+
+      ✗ "没有消息循环，窗口就是死的"
+      ✓ "没人抽消息，窗口就是死的"
+
+    抽的人可以是：
+      · MessageBoxA 内部（只要有模态对话框弹着）
+      · 自己写的 while (GetMessageA(...))     ← 正常程序用这个
+
+  【顺手记一个坑：模态对话框会禁用主人窗口】
+
+    MessageBoxA(NULL, ...)     第一个参数 NULL = 这框不属于谁
+    MessageBoxA(hwnd, ...)     把 hwnd 当"主人"
+
+    改成 hwnd 之后【窗口拖不动了】。
+
+    因为模态对话框会把自己的"主人窗口"禁用掉 ——
+    这就是正经软件弹"确定要删除吗"时，后面主窗口点不动的原因。
+
+  【★ 这个坑后面还会咬一次】
+
+    结论：阻塞 = 不抽消息 = 窗口死。
+
+    _getch() 跟 Sleep 一样是阻塞的。
+    所以 CG 窗口开着、要"等玩家按空格"的时候【不能写 _getch()】
+    —— 一写窗口就白屏。
+    得改成轮询：抽消息 → 看有没有键 → 没有就 Sleep(10) → 再来。
+    （见第 10 节）
+
+
+============================================================
+八、真正的消息循环 + 自己写窗口过程
+============================================================
+
+    #include <windows.h>
+
+    /* ★ 窗口过程：Windows 会回头调用这个函数 ★ */
+    LRESULT CALLBACK MyProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+    {
+        switch (msg) {
+        case WM_DESTROY:
+            PostQuitMessage(0);
+            return 0;
+        }
+        return DefWindowProcA(hwnd, msg, wp, lp);
+    }
+
+    int main(void)
+    {
+        WNDCLASSA wc = { 0 };
+        wc.lpfnWndProc   = MyProc;              /* ★ 换成自己的 */
+        wc.hInstance     = GetModuleHandleA(NULL);
+        wc.lpszClassName = "MyWin";
+        wc.hbrBackground = (HBRUSH)GetStockObject(GRAY_BRUSH);
+        RegisterClassA(&wc);
+
+        HWND hwnd = CreateWindowA("MyWin", "我的窗口",
+            WS_OVERLAPPEDWINDOW, 100, 100, 600, 400,
+            NULL, NULL, wc.hInstance, NULL);
+        ShowWindow(hwnd, SW_SHOW);
+
+        /* ★ 真正的消息循环 ★ */
+        MSG msg;
+        while (GetMessageA(&msg, NULL, 0, 0)) {
+            TranslateMessage(&msg);
+            DispatchMessageA(&msg);
+        }
+        return 0;
+    }
+
+  ★ 现在点叉能【正常退出】了（上一节那个点叉是关不掉的）。
+
+  ────────────────────────────────────────────
+  8.1 消息驱动 —— 控制流反过来了
+  ────────────────────────────────────────────
+
+  【已经会的：顺序式】
+
+    项目 3000 行都是这个形状：
+
+      while (1) {
+          char c = _getch();          // 我主动去要输入
+          if (c == 'w') py--;         // 我决定接下来干什么
+          else if (c == 'a') px--;
+      }
+
+    ★ 自己是主动方。要输入、决定顺序，程序按写的路线走。
+
+  【新的：窗口是被动的】
+
+    Windows 会不停地给窗口【发消息】：
+
+      消息（又是宏）        意思
+      ──────────────────────────────────────
+      WM_PAINT              你那块脏了，重画一下
+      WM_KEYDOWN            有人按了键
+      WM_LBUTTONDOWN        有人按了左键
+      WM_MOUSEMOVE          鼠标动了
+      WM_CLOSE              有人点了叉
+      WM_DESTROY            窗口已经被销毁了
+      WM_SIZE               窗口大小变了
+
+    还有几十种。★ 不能拒收，也不能规定顺序。
+
+    只能提供一个函数，让 Windows 回头调 —— 这就是函数指针的用处。
+
+  ────────────────────────────────────────────
+  8.2 窗口过程的函数头
+  ────────────────────────────────────────────
+
+    LRESULT CALLBACK MyProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+
+    看着吓人，全是别名：
+
+      词             真身        说明
+      ──────────────────────────────────────────────────
+      LRESULT        就是整数    typedef 出来的返回值类型
+      CALLBACK       一个宏      标记"被系统调的"，★ 照抄
+      HWND hwnd      句柄        【哪个】窗口收到的消息
+      UINT msg       无符号整数  【什么】消息（WM_xxx 的值）
+      WPARAM wp      整数        消息附带的数据 ①
+      LPARAM lp      整数        消息附带的数据 ②
+
+  ★ wp / lp 里装什么，取决于是哪条消息：
+
+      消息               wp 里是          lp 里是
+      ────────────────────────────────────────────
+      WM_KEYDOWN         键码             一堆标志位
+      WM_LBUTTONDOWN     Shift/Ctrl 状态  鼠标坐标
+      WM_DESTROY         没用             没用
+
+    所以要拿按键就是 (int)wp。
+
+  ★ 这个参数表【不能改】。少一个、类型不对，
+    wc.lpfnWndProc = MyProc; 那行就编译报错
+    —— 因为那个字段要求的就是这个形状的函数指针。
+
+  ────────────────────────────────────────────
+  8.3 最后那行绝对不能省
+  ────────────────────────────────────────────
+
+    return DefWindowProcA(hwnd, msg, wp, lp);
+
+    Windows 会发【几十种】消息。自己只处理了 1 种，
+    剩下几十种必须原样转给系统默认处理。
+
+  【实验】把它改成 return 0;（全部自己吞掉）
+
+      switch (msg) {
+      case WM_DESTROY:
+          PostQuitMessage(0);
+          return 0;
+      }
+      return 0;                          /* ← 全吞 */
+
+    结果：窗口出现了，但
+      · 标题栏是白的
+      · 边框画不出来
+      · 拖不动
+      · 叉点不了
+
+    因为那些活本来是 DefWindowProcA 干的，消息被吃了，它没机会干。
+
+  ★★ 窗口过程的固定结构（每个都长这样，没有例外）：
+
+      关心的   → 自己 case 处理 → return 0
+      不关心的 → 落到最后       → 转 DefWindowProc
+
+  ────────────────────────────────────────────
+  8.4 点叉之后发生了什么 —— 一条 11 步的链
+  ────────────────────────────────────────────
+
+    ①  点了右上角的叉
+    ②  Windows 发 WM_CLOSE 给窗口
+    ③  MyProc 收到 WM_CLOSE —— 没写这个 case
+    ④  落到最后一行，转给 DefWindowProcA
+    ⑤  DefWindowProcA 的默认行为：调 DestroyWindow(hwnd)
+    ⑥  窗口被销毁，Windows 发 WM_DESTROY
+    ⑦  MyProc 收到 WM_DESTROY —— ★ 这个写了 case
+    ⑧  PostQuitMessage(0) 往队列里放一条 WM_QUIT
+    ⑨  GetMessageA 取到 WM_QUIT，返回 0
+    ⑩  while 条件为假，循环结束
+    ⑪  main 走到 return 0，程序退出
+
+  ★ 两个关键点：
+
+    【一】WM_CLOSE 和 WM_DESTROY 是两回事
+
+        WM_CLOSE    = "有人想关我"（还没关）
+        WM_DESTROY  = "我已经被销毁了"（已经关了）
+
+    【二】"窗口关了" ≠ "程序结束了"
+
+        不写 PostQuitMessage，窗口销毁后消息循环还在转，
+        main 出不来 —— 程序变成一个看不见的僵尸进程
+        （要去任务管理器杀）。
+
+        PostQuitMessage 就是把这两件事【接上】的那一环。
+
+  ────────────────────────────────────────────
+  8.5 消息循环逐行
+  ────────────────────────────────────────────
+
+    MSG msg;
+
+      MSG 又是个结构体，Windows 定义的。
+      里面装一条消息的信息：哪个窗口、什么消息、附带什么数据。
+
+    while (GetMessageA(&msg, NULL, 0, 0)) {
+
+      GetMessageA = 从队列里取一条消息，装进 msg。
+
+      ★ 它是【阻塞】的 —— 队列空了就在这儿等着，
+        跟 _getch() 一个性格。
+
+      返回值：
+        正常取到消息      → 非 0
+        取到 WM_QUIT      → 0    （while 就结束了）
+
+      &msg 传地址，因为要把结果【写进】msg。
+      —— 跟 scanf("%d", &n) 传地址一个道理。
+
+      后面三个 NULL, 0, 0 照抄。
+
+        TranslateMessage(&msg);
+
+      把按键消息翻译一下。
+      键盘发来的是"扫描码"（第 30 号键被按下），
+      这个函数把它翻译成"字符 A"。不管细节，照抄。
+
+        DispatchMessageA(&msg);
+
+      ★★ 这一句才是重点：把消息送给窗口去处理。
+
+      送给谁？送给 wc.lpfnWndProc 登记的那个函数。
+
+  ★★ 整条线现在连上了：
+
+      Windows 产生消息
+         ↓
+      堆进【线程的】消息队列
+         ↓
+      GetMessageA 取出来
+         ↓
+      DispatchMessageA 派发
+         ↓
+      调用 lpfnWndProc 指定的函数（MyProc 或 DefWindowProcA）
+         ↓
+      那个函数处理"拖动""改大小"等等
+         ↓
+      窗口动了
+
+  ────────────────────────────────────────────
+  8.6 不抽消息会怎样（再确认一次）
+  ────────────────────────────────────────────
+
+    把消息循环删掉，换回 MessageBoxA(NULL, ...)。然后：
+      1. 用别的窗口盖住它一部分
+      2. 移开
+
+    那块地方不会恢复。
+
+    因为：系统发了 WM_PAINT 说"你脏了，重画"，
+          但【没人取这条消息】，所以永远没人重画。
+
+  ★★ 记住这句话，它决定了后面所有的设计：
+
+      只要窗口开着，就必须【持续不断地】抽消息。
+      所以窗口开着的时候【不能用 _getch() 卡住】。
+
+
+============================================================
+九、拦住关闭 + 接键盘鼠标
+============================================================
+
+  ────────────────────────────────────────────
+  9.1 WM_CLOSE 能拦住关闭
+  ────────────────────────────────────────────
+
+    既然 WM_CLOSE 是"想关但还没关"，就能在这儿拦一下：
+
+      case WM_CLOSE:
+          if (MessageBoxA(hwnd, "真的要关吗？", "等一下", MB_YESNO) == IDYES)
+              DestroyWindow(hwnd);       /* 同意 → 手动销毁 */
+          return 0;                      /* 不同意 → 什么都不做，窗口留着 */
+
+    ★ 注意 return 0 的位置：它在 if【外面】。
+
+      也就是说不管选是还是否，这条消息都算"我处理完了"，
+      不会再落到 DefWindowProcA。
+
+      如果漏写这个 return 0，DefWindowProcA 会再帮你销毁一次
+      —— 那这个"真的要关吗"就白问了。
+
+    ★ 这就是游戏里"确定要退出吗"的实现方式。
+
+  ────────────────────────────────────────────
+  9.2 WM_KEYDOWN 接键盘
+  ────────────────────────────────────────────
+
+      case WM_KEYDOWN:
+          if (wp == VK_SPACE)  MessageBoxA(hwnd, "你按了空格", "喂", MB_OK);
+          if (wp == 'A')       MessageBoxA(hwnd, "你按了 A",   "喂", MB_OK);
+          if (wp == VK_ESCAPE) DestroyWindow(hwnd);
+          return 0;
+
+    跑起来要【先点一下窗口让它获得焦点】，再按键。
+
+  【wp 里是"虚拟键码"（Virtual Key Code）】
+
+    · 字母、数字键：就是【大写】的 ASCII —— 'A' 'B' '0' '1'
+    · ★ 注意是大写。按小写 a 送来的也是 'A'，
+      因为它表示"哪个键"，不是"什么字符"
+    · 其他键有专门的宏：
+
+        VK_SPACE     空格
+        VK_RETURN    回车
+        VK_ESCAPE    Esc
+        VK_UP        ↑
+        VK_DOWN      ↓
+        VK_LEFT      ←
+        VK_RIGHT     →
+
+  ★★ 和 _getch() 的重要差异（容易踩）：
+
+      char c = _getch();
+      if (c == 'a') px--;        // 小写 a，_getch 区分大小写
+
+      _getch()      给的是【字符】 —— 区分大小写
+      WM_KEYDOWN    给的是【哪个键】—— 不区分大小写
+
+    所以项目里 WASD 的判断搬到窗口里要改成大写 'W' 'A' 'S' 'D'。
+
+  ────────────────────────────────────────────
+  9.3 WM_LBUTTONDOWN 接鼠标
+  ────────────────────────────────────────────
+
+      case WM_LBUTTONDOWN:
+          MessageBoxA(hwnd, "你点了左键", "喂", MB_OK);
+          return 0;
+
+    鼠标坐标在 lp 里，用宏取：
+
+      int x = LOWORD(lp);        // 低 16 位 = x
+      int y = HIWORD(lp);        // 高 16 位 = y
+
+    ★ 一个整数塞两个数 —— 又是"位"的玩法。
+
+  ────────────────────────────────────────────
+  9.4 这一节完整的实验版
+  ────────────────────────────────────────────
+
+    #include <windows.h>
+
+    LRESULT CALLBACK MyProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+    {
+        switch (msg) {
+
+        case WM_KEYDOWN:
+            if (wp == VK_SPACE)  MessageBoxA(hwnd, "你按了空格", "喂", MB_OK);
+            if (wp == VK_ESCAPE) DestroyWindow(hwnd);
+            return 0;
+
+        case WM_LBUTTONDOWN:
+            MessageBoxA(hwnd, "你点了左键", "喂", MB_OK);
+            return 0;
+
+        case WM_CLOSE:
+            if (MessageBoxA(hwnd, "真的要关吗？", "等一下", MB_YESNO) == IDYES)
+                DestroyWindow(hwnd);
+            return 0;
+
+        case WM_DESTROY:
+            PostQuitMessage(0);
+            return 0;
+        }
+        return DefWindowProcA(hwnd, msg, wp, lp);
+    }
+
+    int main(void)
+    {
+        WNDCLASSA wc = { 0 };
+        wc.lpfnWndProc   = MyProc;
+        wc.hInstance     = GetModuleHandleA(NULL);
+        wc.lpszClassName = "MyWin";
+        wc.hbrBackground = (HBRUSH)GetStockObject(GRAY_BRUSH);
+        RegisterClassA(&wc);
+
+        HWND hwnd = CreateWindowA("MyWin", "我的窗口",
+            WS_OVERLAPPEDWINDOW, 100, 100, 600, 400,
+            NULL, NULL, wc.hInstance, NULL);
+        ShowWindow(hwnd, SW_SHOW);
+
+        MSG msg;
+        while (GetMessageA(&msg, NULL, 0, 0)) {
+            TranslateMessage(&msg);
+            DispatchMessageA(&msg);
+        }
+        return 0;
+    }
+
+    四个 case，四个动作：
+      按空格弹框 / 按 Esc 关窗 / 点左键弹框 / 点叉问一句
+
+
+============================================================
+十、GetMessage vs PeekMessage —— 一个重要伏笔
+============================================================
+
+    while (GetMessageA(&msg, NULL, 0, 0)) {
+
+  GetMessageA 是【阻塞】的 —— 队列空了就在这儿等。
+
+  ★ 这在上面那个程序里【正好】：没事干就该睡着，不占 CPU。
+    记事本、计算器这种"静态窗口"都用它。
+
+  ★★ 但 CG 窗口【不行】。
+
+    因为打字机要"每 45 毫秒画一个字"，
+    它必须【主动往下走】，不能坐在 GetMessageA 里等玩家动作。
+
+  所以要换成 PeekMessageA：
+
+      void pump(void)
+      {
+          MSG msg;
+          while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) {
+              TranslateMessage(&msg);
+              DispatchMessageA(&msg);
+          }
+      }
+
+    PeekMessageA = "看看有没有消息，有就取走，【没有就立刻返回 0】"
+
+    PM_REMOVE = 取走（还有 PM_NOREMOVE = 只看不取）
+
+  ★ 两个函数的区别是后面所有设计的分水岭：
+
+      函数            没消息时      用在
+      ──────────────────────────────────────────────
+      GetMessageA     等着（阻塞）  静态窗口（记事本）
+      PeekMessageA    立刻返回 0    要动画的（游戏、打字机）
+
+  【于是"等一个按键"要改成轮询】
+
+      while (1) {
+          pump();                    // 先抽消息，让窗口活着
+          if (有键) break;           // 有键就走
+          Sleep(10);                 // 没键就睡一下，别空转
+      }
+
+    ★ Sleep(10) 不能省。
+      去掉它这个循环会把一个 CPU 核心跑满，风扇狂转。
+      10 毫秒人感觉不到。
+
+  【按键怎么从窗口过程传出来 —— 全局变量当信箱】
+
+    窗口过程是被系统调的，不能在里面赖着不走
+    —— 赖着就等于不抽消息，卡死。
+
+    所以它只能"记一笔就走"：
+
+      static int g_key = 0;                  // ← 全局变量，当"信箱"
+
+      LRESULT CALLBACK MyProc(...) {
+          case WM_KEYDOWN:
+              g_key = (int)wp;               // 只记下来，立刻返回
+              return 0;
+      }
+
+    主流程去信箱里取：
+
+      int my_getch(void)                     // 窗口版的 _getch
+      {
+          g_key = 0;
+          while (1) {
+              pump();                        // 让系统有机会调 MyProc
+              if (g_key) {
+                  int k = g_key;
+                  g_key = 0;                 // 取走就清空
+                  return k;
+              }
+              Sleep(10);
+          }
+      }
+
+    ★ 全局变量当信箱，一个写一个读 —— 窗口编程里最常见的结构。
+
+    写完这个 my_getch，后面用它就跟用 _getch() 一样了。
+    ★ 麻烦只在实现里，用的时候不麻烦。
+
+
+============================================================
+十一、这份笔记的对照表
+============================================================
+
+    新概念              已经会的同源物
+    ─────────────────────────────────────────────────────
+    Windows API         printf / malloc —— 别人写的函数
+    A / W 后缀          PlaySoundA / WriteConsoleW（项目里就有）
+    WS_/WM_/SW_ 宏      就是数字；| 拼开关 = C 课的位运算
+    句柄 HWND           指针 + GetStdHandle(STD_OUTPUT_HANDLE)
+    WNDCLASSA 结构体    conver_node（一样的东西，字段多点）
+    = { 0 } 清零        malloc 完要 memset
+    句柄用完置 NULL     free(node); node = NULL;
+    函数指针            数组名 = 首地址（同一个规则）★唯一新语法
+    消息驱动            ← 没有同源物，唯一真正要转弯的
+    GetMessage 阻塞     _getch() 阻塞
+    PeekMessage 轮询    _kbhit()（笔记 20）
+
+  ★ 总结：
+      一个新语法（函数指针）
+      一个真正的新思维（消息驱动：控制流反过来）
+      其余全是已有知识的换皮。
+
+
+============================================================
+十二、踩过的坑 / 容易错的点
+============================================================
+
+   1. WNDCLASSA 不清零 → 垃圾值 → 行为不可预测
+      ★ = { 0 } 必写
+
+   2. 窗口过程最后漏了 return DefWindowProcA
+      → 标题栏白的、拖不动、叉点不了
+
+   3. 只写 WM_CLOSE 不写 WM_DESTROY + PostQuitMessage
+      → 窗口关了但程序不退，僵尸进程
+
+   4. WM_CLOSE 里的 return 0 写在 if 里面
+      → DefWindowProc 又销毁一次，"确定要关吗"白问
+
+   5. WM_KEYDOWN 里用小写字母判断
+      → 永远不成立。虚拟键码是【大写】的
+
+   6. 忘了 CreateWindow 出来的窗口默认隐藏
+      → 没调 ShowWindow，什么都看不见
+
+   7. 造完窗口直接 return 0
+      → 一闪就没。必须有人卡着 + 抽消息
+
+   8. 以为 MessageBoxA 卡着的时候"不需要消息循环"
+      → 是 MessageBoxA 替你抽的。换成 Sleep 立刻现原形
+
+   9. 消息队列是【线程】级的，不是窗口级的
+      → 这是第 8 条成立的原因
+
+  10. CreateWindowA 的第 1 个参数和 lpszClassName 必须一字不差
+      → 不一样就返回 NULL，窗口造不出来
+
+
+============================================================
+十三、下一步
+============================================================
+
+  这份笔记结束时，窗口的骨架全会了：
+    能显示、能响应键盘鼠标、能正常开关。
+
+  ★ 还剩一件事不会：往窗口里画东西。现在窗口只有一片灰。
+
+  → 见笔记 34（HDC / WM_PAINT / 画字 / 画方块 / 字体 / 三明治）
+  → 再往后：显示 BMP 图片 + 双缓冲 + 打字机
+
+============================================================

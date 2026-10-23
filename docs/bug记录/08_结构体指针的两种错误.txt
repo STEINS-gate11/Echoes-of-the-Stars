@@ -1,0 +1,88 @@
+============================================================
+《星空回响》Bug 记录 08 · 结构体指针的两种错误
+============================================================
+
+【现象】
+写完 play_pangpai 函数编译报错：
+  1. mujian_zhuanhuan* temp = chapter_zhuanhuan[chapter];
+     报错：无法把 mujian_zhuanhuan 转换成 mujian_zhuanhuan*
+
+  2. delay_with_Chinese(temp->line1, 40);
+     报错：mujian_zhuanhuan 没有 line1 成员
+
+【错误代码】
+
+  struct mujian_zhuanhuan {
+      const wchar_t* label;
+      const wchar_t* name;
+      const wchar_t* pangbai1;    // ← 成员名叫 pangbai1
+      const wchar_t* pangbai2;    // ← 成员名叫 pangbai2
+  };
+  mujian_zhuanhuan chapter_zhuanhuan[7] = { ... };
+
+  void play_pangpai(int chapter) {
+      mujian_zhuanhuan* temp = chapter_zhuanhuan[chapter];   // ★ 错 1
+      ...
+      if (temp->pangbai1 != NULL) {
+          delay_with_Chinese(temp->line1, 40);               // ★ 错 2
+      }
+      if (temp->pangbai2 != NULL) {
+          delay_with_Chinese(temp->line1, 40);               // ★ 错 3（重复用 line1）
+      }
+  }
+
+【错误 1：忘记 & 取地址】
+
+  chapter_zhuanhuan[chapter] 是一个"结构体本身"（不是指针）
+  要把它赋给一个指针变量，必须加 & 取地址：
+
+  错：mujian_zhuanhuan* temp = chapter_zhuanhuan[chapter];
+  对：mujian_zhuanhuan* temp = &chapter_zhuanhuan[chapter];
+
+  规则：
+    - 数组名[下标] → 元素本身（值）
+    - &数组名[下标] → 元素的地址（指针）
+
+【错误 2：成员名不一致】
+
+  定义结构体时用的名字：pangbai1 / pangbai2
+  访问时用的名字：line1
+  两边不一样。编译器只认结构体里定义的名字，所以 line1 不存在。
+
+  规则：结构体定义和访问必须完全一致。
+       想改名字就一起改，绝对不能一边一个。
+
+【错误 3：复制粘贴的时候没改】
+
+  处理 pangbai2 那一段是从 pangbai1 那一段复制过来的，
+  但是里面的 line1 忘记改成 line2。
+  即使名字对上（pangbai1/pangbai2），复制粘贴也可能忘记改这个内部值。
+
+【解决方式】
+
+  void play_pangpai(int chapter) {
+      mujian_zhuanhuan* temp = &chapter_zhuanhuan[chapter];   // ✓ 加 &
+      ...
+      if (temp->pangbai1 != NULL) {
+          delay_with_Chinese(temp->pangbai1, 40);             // ✓ pangbai1
+      }
+      if (temp->pangbai2 != NULL) {
+          delay_with_Chinese(temp->pangbai2, 40);             // ✓ pangbai2
+      }
+  }
+
+【教训】
+
+  1. 数组元素赋给指针，永远记得加 & 取地址
+     除非那个数组存的本身就是指针（比如 char*[] 或函数指针）
+
+  2. 结构体成员名一定要统一
+     定义什么名字，访问的时候就用什么名字。
+     不确定时回头看结构体定义。
+
+  3. 复制粘贴写代码时，务必把里面的变量名一起改
+     Ctrl+D 复制一行、Alt+↓ 上下移动，都容易忘记改里面的值。
+     写完 pangbai2 那段后，最好从头逐字读一遍，检查是不是所有 1 都改成 2 了。
+
+
+============================================================

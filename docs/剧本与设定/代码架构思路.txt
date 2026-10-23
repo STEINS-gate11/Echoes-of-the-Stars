@@ -1,0 +1,639 @@
+============================================================
+《星空回响》代码架构完整思路
+============================================================
+
+【本文档说明】
+- 不写具体代码，只讲架构、职责、通信、启动路径
+- 8 周开发路线的"代码地图"
+- W1 Day 1 开始就照这个思路写
+
+
+============================================================
+第一部分：整体架构（俯视图）
+============================================================
+
+游戏本质上是一个"每 30 毫秒问自己一次'现在是谁'的循环"。
+
+    ┌─────────────────────────────────────────────┐
+    │                                             │
+    │   ┌────────┐   ┌────────┐   ┌────────┐    │
+    │   │ INPUT  │→│ UPDATE │→│ RENDER │→ Sleep │
+    │   └────────┘   └────────┘   └────────┘    │
+    │        ↑                        │           │
+    │        └────────────────────────┘           │
+    │             一个循环 = 一帧                  │
+    │                                             │
+    └─────────────────────────────────────────────┘
+
+每一帧只做三件事：
+  1. 读键盘 (input)
+  2. 更新状态 (update)
+  3. 画屏幕 (render)
+
+"状态"包括：现在在哪个场景、光标在哪、记忆值多少、
+对话是否激活、结局有没有触发……
+
+一切复杂性都藏在"状态"里。
+
+
+============================================================
+第二部分：分层设计（三层）
+============================================================
+
+┌───────────────────────────────────────────────────────┐
+│  第 3 层 · 表现层 (Presentation)                       │
+│      · 控制台绘制（gotoxy / setColor / printf）        │
+│      · 场景 .txt 加载 / 打字机 / 淡入淡出              │
+│      · BGM / 音效播放                                  │
+├───────────────────────────────────────────────────────┤
+│  第 2 层 · 逻辑层 (Logic)                              │
+│      · 状态机（标题 → 场景 → 结局）                    │
+│      · 碰撞检测 / 交互判定 / 结局触发                  │
+│      · 记忆值倒计时 / 存档读写                         │
+├───────────────────────────────────────────────────────┤
+│  第 1 层 · 数据层 (Data)                               │
+│      · 场景背景数组 char bg[20][49]                    │
+│      · 物品数组 Item scenes[6][3]                      │
+│      · 对话文本 / 旁白 / 结局文字（const 表）          │
+│      · 存档结构 SaveData                               │
+└───────────────────────────────────────────────────────┘
+
+★ 数据层是静态的（const，编译时确定），逻辑层调用它。
+★ 逻辑层不直接调 printf，它调表现层。
+★ 表现层不知道"当前在哪个场景"，它只画你给它的东西。
+
+
+============================================================
+第三部分：文件组织（推荐目录结构）
+============================================================
+
+E:\《星空回响》\src\
+├── main.cpp                主函数 + 主循环
+│
+├── engine\                 引擎层（跟游戏无关的工具）
+│   ├── console.h / .cpp    gotoxy / setColor / hideCursor / clearScreen
+│   ├── input.h / .cpp      读键盘 (_kbhit / _getch)
+│   ├── time.h / .cpp       计时 (GetTickCount + 各种 timer)
+│   ├── audio.h / .cpp      BGM 播放 (mciSendString 包装)
+│   └── render.h / .cpp     打字机 / 淡入淡出 / 星空闪烁
+│
+├── scene\                  场景系统
+│   ├── scene.h / .cpp      加载 .txt 到 char bg[20][49] + 绘制
+│   ├── collision.h / .cpp  碰撞检测
+│   └── cursor.h / .cpp     光标移动 + 绘制
+│
+├── item\                   物品交互
+│   ├── item.h / .cpp       Item 结构体 + 拾取逻辑
+│   └── dialog.h / .cpp     对话框绘制 + 打字机播放
+│
+├── data\                   数据结构（C 大作业考核点）
+│   ├── stack.h / .cpp      对话历史栈
+│   └── list.h / .cpp       物品清单链表
+│
+├── memory\                 记忆值系统
+│   └── memory.h / .cpp     100 → 0 倒计时 + HUD 绘制
+│
+├── game\                   游戏逻辑
+│   ├── state.h / .cpp      状态机 (enum GameState)
+│   ├── mainline.h / .cpp   主线 6 层 + 3 结局
+│   ├── vega.h / .cpp       Vega 线 4 场景
+│   ├── te.h / .cpp         TE 7 幕
+│   └── title.h / .cpp      标题界面
+│
+├── transition\             过场
+│   ├── chapter.h / .cpp    章节过场（第 X 章 · 章名 · 旁白）
+│   └── ending.h / .cpp     结局播放（A / B / C）
+│
+└── save\                   存档
+    └── save.h / .cpp       save.dat 读写
+
+res\ (资源目录 · 已有)
+├── prologue.txt ...        11 张场景 ASCII
+└── bgm\                    音频文件（.wav 或 .mp3）
+
+
+★ W1-W4 只需要 engine\ + scene\ + item\ + dialog\ + game\title\ 和 game\mainline\
+★ W5 加 data\ + memory\
+★ W6-W7 加 vega\ + te\ + save\ + audio\
+
+
+============================================================
+第四部分：状态机（核心）
+============================================================
+
+整个游戏就是一个大的状态机。
+
+    enum GameState {
+        STATE_TITLE,           // 标题界面
+        STATE_CHAPTER_INTRO,   // 章节过场（第 X 章）
+        STATE_EXPLORE,         // 场景探索（WASD 走位）
+        STATE_DIALOG,          // 对话框激活中
+        STATE_TRANSITION,      // 层间旁白播放
+        STATE_ENDING_A,        // 结局 A 播放
+        STATE_ENDING_B,        // 结局 B 播放
+        STATE_ENDING_C,        // 结局 C 播放
+        STATE_VEGA_OPENING,    // Vega 开场引言
+        STATE_VEGA_EXPLORE,    // Vega 场景走位
+        STATE_VEGA_MONO,       // Vega 独白播放
+        STATE_VEGA_ENDING,     // Vega 结尾字幕
+        STATE_TE,              // TE 全程播放
+        STATE_QUIT             // 退出游戏
+    };
+
+主循环：
+
+    while (state != STATE_QUIT) {
+        handleInput();
+        updateState();       // 里面根据 state 分派
+        renderState();       // 里面根据 state 分派
+        Sleep(30);
+    }
+
+updateState() 里：
+    switch (state) {
+        case STATE_TITLE:      updateTitle();      break;
+        case STATE_EXPLORE:    updateExplore();    break;
+        case STATE_DIALOG:     updateDialog();     break;
+        ...
+    }
+
+renderState() 类似。
+
+★ 每个状态一个小函数，各管各的。
+★ 状态切换只在 update 里发生（比如玩家按 E 触发对话 → state = STATE_DIALOG）
+
+
+============================================================
+第五部分：数据组织（运行时 vs 静态）
+============================================================
+
+【静态数据】—— const，编译时确定
+
+  // 场景元数据
+  struct SceneInfo {
+      const char *bgFile;      // "prologue.txt"
+      const char *chapterName; // "深夜"
+      int  chapterNum;         // 0 = 序幕, 1-5
+      Item items[3];           // 3 件物品
+      const char *narration;   // 层间旁白（进入下一层前播）
+  };
+
+  const SceneInfo MAINLINE_SCENES[6] = {
+      // 序幕
+      { "prologue.txt", "深夜", 0,
+        {
+          {'A', 14, 12, "折纸星星", "你拿起那颗星星...", false},
+          {'B', 32, 12, "空白日记本", "封面写着...", false},
+          {'C', 21, 17, "模糊照片", "照片很模糊...", true},
+        },
+        NULL   // 序幕之前没有旁白（游戏开场直接进）
+      },
+      // 图书馆
+      { "library.txt", "初遇", 1,
+        {
+          {'A', 16, 11, "天文书籍", "你翻开那本书...", false},
+          {'B', 29, 11, "两杯咖啡", "一杯是满的...", false},
+          {'C', 12, 16, "手写便签", "\"下周三...\"", true},
+        },
+        "你不记得她是谁了。\n但你还记得，你答应过她要去看星星。"
+      },
+      // ... 后 4 层同理
+  };
+
+【运行时数据】—— 全局变量，游戏过程中变化
+
+  GameState state = STATE_TITLE;
+  int currentScene = 0;         // 0 = 序幕, 1-5
+  int cursorX = 24, cursorY = 19;
+
+  int memory = 100;             // 记忆值
+  DWORD lastMemoryTick = 0;     // 上次扣减时刻
+  bool memoryPaused = false;    // 对话时暂停
+
+  Item runtimeItems[6][3];      // 拷贝自 MAINLINE_SCENES 的 items
+                                // 运行时可以改 taken 字段
+  int takenCount = 0;
+  int missedHiddenCount = 0;
+
+  char bg[20][49];              // 当前场景背景
+
+  SaveData save;                // 存档标记
+
+
+★ 静态数据用 const，逻辑层只读。
+★ 运行时数据是全局变量（用一个 struct 包起来更好）。
+★ 分开的好处：加载一次的资源和每帧变化的东西不混。
+
+
+============================================================
+第六部分：W1 Day 1 到 W4 结束的最小实现路径
+============================================================
+
+★★★ 这一段是你明天要照着写的具体代码路径 ★★★
+
+
+【W1 Day 1】环境搭建（0 行游戏代码）
+  1. 装 Dev-C++ 或 VSCode + MinGW
+  2. 建 main.cpp，写 printf("Hello 星空回响\n")
+  3. 编译，运行，能看到中文（先确认编码不乱）
+  4. 用 chcp 65001 或 SetConsoleOutputCP(65001) 支持 UTF-8
+  收工。
+
+
+【W1 Day 2】4 个引擎工具函数
+  写 engine/console.cpp，实现：
+    gotoxy(int x, int y)     用 SetConsoleCursorPosition
+    setColor(int c)           用 SetConsoleTextAttribute
+    hideCursor()              用 SetConsoleCursorInfo
+    clearScreen()             用 system("cls") 或 gotoxy(0,0) 覆盖
+
+  最小 main：
+    hideCursor();
+    setColor(14);
+    gotoxy(20, 5);
+    printf("这里是金色的星空回响");
+    Sleep(3000);
+
+
+【W1 Day 3-4】场景加载器
+  写 scene/scene.cpp，实现：
+    loadScene(const char *file, char bg[20][49])
+      → fopen + fgets 循环 20 次 + fclose
+    drawScene(const char bg[20][49])
+      → gotoxy(0, y) + printf 每一行
+
+  最小 main：
+    char bg[20][49];
+    loadScene("res/title.txt", bg);
+    drawScene(bg);
+    _getch();
+
+
+【W1 Day 5-6】状态机骨架 + 键盘
+  写 game/state.cpp：
+    GameState state = STATE_TITLE;
+    while (state != STATE_QUIT) {
+        char key = readKey();  // _kbhit + _getch
+        switch (state) {
+            case STATE_TITLE:
+                if (key == ' ') state = STATE_EXPLORE;
+                if (key == 'q') state = STATE_QUIT;
+                break;
+            case STATE_EXPLORE:
+                // 暂时空
+                break;
+        }
+        render();
+        Sleep(30);
+    }
+
+
+【W1 Day 7】里程碑
+  能显示 title.txt → 按空格切到 prologue.txt → 按 Q 退出
+
+
+【W2】光标 + WASD + 碰撞
+  scene/cursor.cpp:
+    drawCursor(int x, int y)   → gotoxy(x, y) + 反色输出
+    tryMove(int dx, int dy)    → 检查目标格是否是碰撞字符
+                                 是则拒绝，否则移动
+
+  W2 里程碑：光标能在 prologue 走位，碰墙不能过。
+
+
+【W3】物品交互 + 打字机 + 对话框
+  item/item.cpp:
+    isNearItem(int px, int py, Item *it) → |dx|+|dy| <= 1
+    triggerDialog(Item *it) → state = STATE_DIALOG
+
+  item/dialog.cpp:
+    drawDialogFrame(...)    → 画上下横线（无左右竖线）
+    typewriter(const char *text, int msPerChar)
+      → 逐字 printf + Sleep + _kbhit 检测跳过（本项目不做跳过，但要预留）
+
+  W3 里程碑：走到物品旁边按 E，能看到打字机对话，播完按空格关闭。
+
+
+【W4】剩余 5 层 + 结局 A/B
+  game/mainline.cpp:
+    onSceneCleared() → 3 物品全拾取时调用
+      → 播层间旁白 → 章节过场 → 切下一层
+    checkEnding() → 到 finale 时判定 A/B
+      case A: playEndingA()
+      case B: playEndingB()
+
+  transition/ending.cpp:
+    playEndingA()  → 星空 + 结语 8 段 + 她说 6 段 + 献词
+    playEndingB()  → 简版书房 + 结语 4 段
+
+  W4 里程碑：主线可以从头玩到尾，通关 A 和 B。
+              ★ 这是硬止损线，无论如何 W4 结束前必须完成 ★
+
+
+============================================================
+第七部分：W5 数据结构 + 记忆值
+============================================================
+
+【栈：对话历史】
+
+  data/stack.cpp:
+    struct DialogRecord {
+        char itemName[64];
+        char text[512];
+    };
+    struct Stack {
+        DialogRecord items[100];
+        int top;
+    };
+
+    push(Stack *s, DialogRecord r)
+    pop(Stack *s)          // B 键回看时用
+    peek(Stack *s, int n)  // 看最近 N 条
+
+  用法：每次 triggerDialog 之后 push；按 B 弹出最近 5 条显示。
+
+
+【链表：物品清单】
+
+  data/list.cpp:
+    struct ItemNode {
+        char name[64];
+        int  sceneIndex;
+        ItemNode *next;
+    };
+    struct List {
+        ItemNode *head;
+        int count;
+    };
+
+    append(List *l, ItemNode node)   // 拾取时加节点
+    display(List *l)                 // 按 C 键查看
+
+  用法：每次 taken = true 之后 append。
+
+
+【记忆值】
+
+  memory/memory.cpp:
+    int memory = 100;
+    DWORD lastTick;
+    bool paused;
+
+    updateMemory():
+      if (paused) return;
+      DWORD now = GetTickCount();
+      while (now - lastTick >= 8000 && memory > 0) {
+          memory--;
+          lastTick += 8000;
+      }
+      if (memory <= 0 && !inFinaleEnding) {
+          state = STATE_ENDING_C;
+      }
+
+    drawHUD():
+      gotoxy(60, 0);
+      setColor(memoryColor(memory));
+      printf("记忆: %d / 100", memory);
+
+  对话激活时 memoryPaused = true
+  对话关闭时 memoryPaused = false + lastTick = GetTickCount()
+
+
+============================================================
+第八部分：W6-W7 Vega + TE
+============================================================
+
+【Vega 线】
+
+  vega/vega.cpp:
+    - 复用主线的 scene / cursor / dialog 引擎
+    - 差别：
+        没有 E 键交互（走位自动触发）
+        没有记忆值（memoryPaused 全程 true）
+        光标颜色改为浅紫（13）
+        HUD 显示 "PERSPECTIVE : VEGA"
+
+    struct VegaScene {
+        const char *bgFile;
+        const char *intro;        // 引入独白
+        Trigger triggers[4];      // 触发点（走位触发）
+        const char *outro;        // 场景转场独白
+    };
+
+    updateVegaExplore():
+      for (each trigger in current scene):
+        if (|cursorX - t.x| + |cursorY - t.y| <= 1 && !t.triggered):
+          t.triggered = true;
+          state = STATE_VEGA_MONO;
+          currentMono = t.text;
+
+
+【TE 线】
+
+  te/te.cpp:
+    - 无 WASD，无交互，纯播放
+    - 7 幕依次播放
+    - 全程一首 BGM（将幸福装满口袋）
+
+    playTE():
+      audio.playBGM("将幸福装满口袋.mp3", 3000);  // 淡入
+      playTE_Frame0();  // 引言
+      playTE_Frame1();  // 天文馆
+      playTE_Frame2();  // 医院
+      playTE_Frame3();  // 分屏
+      playTE_Frame4();  // 这个宇宙
+      playTE_Frame5();  // 她说
+      playTE_Frame6();  // 献词
+      audio.fadeOutBGM(5000);
+      save.te_cleared = true;
+      state = STATE_TITLE;
+
+
+============================================================
+第九部分：存档系统（很简单）
+============================================================
+
+  save/save.cpp:
+    struct SaveData {
+        bool endingA_cleared;
+        bool endingB_cleared;
+        bool endingC_cleared;
+        bool vega_cleared;
+        bool te_cleared;
+    };
+
+    void loadSave(SaveData *s):
+      FILE *fp = fopen("save.dat", "rb");
+      if (fp) { fread(s, sizeof(SaveData), 1, fp); fclose(fp); }
+      else    { memset(s, 0, sizeof(SaveData)); }
+
+    void writeSave(const SaveData *s):
+      FILE *fp = fopen("save.dat", "wb");
+      fwrite(s, sizeof(SaveData), 1, fp);
+      fclose(fp);
+
+  游戏启动时 loadSave 一次
+  任一结局触发时改 s 里对应字段 + writeSave
+
+
+============================================================
+第十部分：BGM 系统
+============================================================
+
+  audio/audio.cpp:
+    #include <windows.h>
+    #pragma comment(lib, "winmm.lib")
+
+    static char currentBGM[256] = "";
+
+    void playBGM(const char *file):
+      if (strcmp(currentBGM, file) == 0) return;  // 同一首不切
+      if (currentBGM[0]) {
+          mciSendString("stop bgm", 0, 0, 0);
+          mciSendString("close bgm", 0, 0, 0);
+      }
+      char cmd[256];
+      sprintf(cmd, "open \"%s\" alias bgm", file);
+      mciSendString(cmd, 0, 0, 0);
+      mciSendString("play bgm repeat", 0, 0, 0);
+      strcpy(currentBGM, file);
+
+    void stopBGM():
+      mciSendString("stop bgm", 0, 0, 0);
+      mciSendString("close bgm", 0, 0, 0);
+      currentBGM[0] = 0;
+
+    void setBGMVolume(int vol):  // 0-1000
+      char cmd[64];
+      sprintf(cmd, "setaudio bgm volume to %d", vol);
+      mciSendString(cmd, 0, 0, 0);
+
+  淡入淡出：用 timer 循环调 setBGMVolume。
+
+
+============================================================
+第十一部分：主循环最终形态（伪代码）
+============================================================
+
+int main() {
+    // 启动初始化
+    hideCursor();
+    setConsoleUTF8();
+    loadSave(&save);
+    audio.playBGM("res/bgm/title.mp3");  // 标题 BGM
+
+    GameState state = STATE_TITLE;
+
+    while (state != STATE_QUIT) {
+        // 1. 输入
+        char key = readKey();
+
+        // 2. 更新
+        updateMemory();  // 除非 paused
+
+        switch (state) {
+            case STATE_TITLE:      updateTitle(key);      break;
+            case STATE_CHAPTER_INTRO: updateChapter(key); break;
+            case STATE_EXPLORE:    updateExplore(key);    break;
+            case STATE_DIALOG:     updateDialog(key);     break;
+            case STATE_ENDING_A:   updateEndingA(key);    break;
+            // ... 其他状态
+        }
+
+        // 3. 渲染
+        renderCurrentState();
+
+        // 4. 睡眠
+        Sleep(30);
+    }
+
+    // 收尾
+    audio.stopBGM();
+    return 0;
+}
+
+
+============================================================
+第十二部分：给自己的三条铁律
+============================================================
+
+铁律 1 · 先跑通再优化
+   W1 结束前只要能 "显示 title.txt → 按空格 → 显示 prologue.txt"
+   就够了。不要在 W1 做打字机、颜色、动画。
+
+铁律 2 · 每次改动完立刻编译
+   写 20 行编译一次。写 50 行编译一次。
+   不要等写完 300 行才编译 —— 那样你会花 1 小时找 3 个错。
+
+铁律 3 · 每天结束前 git commit（或复制备份）
+   代码丢失 = 心态崩溃 = 项目死亡。
+   养成每天下班前 zip 打包一次 src/ 的习惯。
+
+
+============================================================
+第十三部分：关于每个模块的估算行数
+============================================================
+
+  模块                    行数估算         难度
+  ---------------------  --------------  ------
+  engine/console.cpp     50-80 行         ⭐
+  engine/input.cpp       30-50 行         ⭐
+  engine/time.cpp        30-50 行         ⭐
+  engine/audio.cpp       80-120 行        ⭐⭐
+  engine/render.cpp      100-150 行       ⭐⭐（打字机+淡入淡出）
+  scene/scene.cpp        60-100 行        ⭐⭐
+  scene/collision.cpp    30-50 行         ⭐
+  scene/cursor.cpp       50-80 行         ⭐⭐
+  item/item.cpp          80-120 行        ⭐⭐
+  item/dialog.cpp        150-200 行       ⭐⭐⭐（打字机+对话框绘制）
+  data/stack.cpp         80-120 行        ⭐⭐
+  data/list.cpp          80-120 行        ⭐⭐
+  memory/memory.cpp      80-120 行        ⭐⭐
+  game/state.cpp         100-150 行       ⭐⭐（分派中心）
+  game/mainline.cpp      200-300 行       ⭐⭐⭐（6 层 + 状态切换）
+  game/vega.cpp          150-200 行       ⭐⭐⭐
+  game/te.cpp            300-400 行       ⭐⭐⭐⭐（7 幕动画）
+  game/title.cpp         100-150 行       ⭐⭐
+  transition/chapter.cpp 100-150 行       ⭐⭐⭐（章节过场动画）
+  transition/ending.cpp  400-600 行       ⭐⭐⭐⭐（3 个结局的动画）
+  save/save.cpp          50-80 行         ⭐
+  main.cpp               50-100 行        ⭐
+  ---------------------  --------------
+  合计                   ~2500-3500 行
+
+  ★ 这是完整版。W4 硬止损版（主线 + A/B）只需要
+    engine + scene + item + dialog + state + mainline + title
+    合计约 1000-1300 行。
+
+
+============================================================
+第十四部分：接下来要做的事（明天开工）
+============================================================
+
+W1 Day 1 (明天):
+  □ 装 Dev-C++ 5.11 或 VSCode + MinGW-w64
+  □ 建工程目录 src/ 和 res/
+  □ 把 11 张 .txt 全部放到 res/
+  □ 写 main.cpp:
+      #include <stdio.h>
+      #include <windows.h>
+      int main() {
+          SetConsoleOutputCP(65001);
+          printf("Hello 星空回响\n");
+          system("pause");
+          return 0;
+      }
+  □ 编译运行，确认中文正常显示。
+
+
+W1 Day 1 结束时你应该能看到：
+  Hello 星空回响
+  请按任意键继续 . . .
+
+
+★ 就这一件事。别的都不做。★
+★ 中文能显示 = W1 Day 1 成功。★
+★ 明天见。★
+
+
+============================================================

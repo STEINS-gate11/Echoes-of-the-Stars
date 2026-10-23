@@ -1,0 +1,421 @@
+============================================================
+《星空回响》学习笔记 15 · 双向链表实现对话历史
+============================================================
+
+【学习时间】2026-07-24
+
+【本笔记内容】
+- 为什么用双向链表存对话历史
+- DialogNode 节点结构
+- head / tail / listSize 三个全局指针
+- pushDialog / clearDialog / isPicked / showOne / showHistory 五大函数
+- 每一个函数的完整讲解和边界情况
+
+
+============================================================
+【一、需求】
+============================================================
+
+策划要求：玩家按 B 键，能"回看"之前拾取过的所有物品对话。
+支持：
+  - A/D 键翻页（一次看一件物品的完整对话）
+  - 显示当前是第几件 / 共几件
+  - Q 键退出回看
+
+需要一个数据结构，能：
+  - 每次拾取物品，往后面加一条（尾插）
+  - 玩家翻页时，可以往前 / 往后走（双向）
+  - 查询某件物品是否已拾取（避免重复捡）
+  - 程序退出前释放内存
+
+
+============================================================
+【二、为什么用双向链表】
+============================================================
+
+对比几种方案：
+
+  方案            尾插   往前翻页  往后翻页  空间
+  -----------     ----   -------  -------  -----
+  数组            O(1)   O(1)     O(1)     固定大小
+  单向链表        O(1)   O(n)★    O(1)     动态
+  双向链表        O(1)   O(1)     O(1)     动态
+
+  ★单向链表往前翻，需要从 head 走过来，很慢
+
+选双向链表原因：
+  - 拾取数量不定（1~15 件），动态分配更好
+  - 双向翻页 O(1)，两个方向都快
+  - 答辩加分：体现"链表操作 + malloc/free 内存管理"能力
+
+
+============================================================
+【三、节点结构】
+============================================================
+
+  struct DialogNode {
+      const wchar_t* name;         // 物品名："⭐ 折纸星星"
+      const wchar_t* lines[5];     // 5 行对话
+      int chapter;                 // 第几章拾取的
+      DialogNode* prev;            // ← 指向上一个节点
+      DialogNode* next;            // → 指向下一个节点
+  };
+
+  每个节点存：
+    - 物品的完整信息（name + 5 行文本 + 章号）
+    - 两个"链条指针"（prev / next）
+
+  为什么 lines 用 wchar_t* 而不是复制字符串：
+    itemDialogs 里的字符串是静态数据段的常量。
+    节点里只保存"指向那个常量的指针"，不需要复制。
+    省内存 + 省时间。
+
+
+============================================================
+【四、三个全局变量】
+============================================================
+
+  DialogNode* head = NULL;     // 指向"第一张纸条"（最老的）
+  DialogNode* tail = NULL;     // 指向"最后一张纸条"（最新的）
+  int listSize = 0;            // 总共几张
+
+  空链表：
+    head → NULL
+    tail → NULL
+    listSize = 0
+
+  非空（3 张）：
+        [⭐] ⇄ [📖] ⇄ [🖼]
+         ↑              ↑
+        head          tail
+    listSize = 3
+
+  为什么要 tail：
+    有 tail 才能 O(1) 尾插和从最新开始遍历。
+    没有 tail 就得从 head 走到末尾，O(n)。
+
+
+============================================================
+【五、pushDialog（尾插）】
+============================================================
+
+场景：拾取一件物品后调用，把该物品的对话变成节点接到尾部。
+
+  void pushDialog(ItemLine* item, int chapter) {
+      DialogNode* node = (DialogNode*)malloc(sizeof(DialogNode));  // ① 造空节点
+      node->name = item->name;                                     // ② 填名字
+      for (int i = 0; i < 5; i++) node->lines[i] = item->lines[i]; //   填文本
+      node->chapter = chapter;                                     //   填章号
+      node->prev = tail;                                           // ③ 前 = 老尾
+      node->next = NULL;                                           //   后 = 空
+      if (tail) tail->next = node;                                 // ④ 老尾的后 = 新节点
+      else head = node;                                            // ⑤ 空链表：head 也指新
+      tail = node;                                                 // ⑥ tail 换新
+      listSize++;                                                  // ⑦ 计数 +1
+  }
+
+关键点：
+
+  1. malloc 出来的内存字段值是垃圾，必须逐个字段赋值。
+
+  2. "先设新节点的 prev/next，再改老 tail 的 next" 这个顺序不能乱。
+     反了会破坏链条。
+
+  3. if (tail) ... else head = node 是处理"空链表插入第一个"：
+     - 空链表 tail 是 NULL，不能操作 tail->next
+     - 这时新节点是第一个，head 也要指它
+
+  4. 时间复杂度 O(1)，因为有 tail 指针，不用遍历。
+
+
+举例（连续三次调用）：
+
+  初始：head=NULL, tail=NULL, listSize=0
+
+  第 1 次 push (⭐)：
+    node->prev = NULL
+    node->next = NULL
+    tail 是 NULL → 进 else → head = node
+    tail = node
+    结果：head=tail=⭐, listSize=1
+
+    [⭐]
+     ↑↑
+   head/tail
+
+  第 2 次 push (📖)：
+    node->prev = ⭐  (老 tail)
+    node->next = NULL
+    tail 存在 → ⭐的 next = 📖
+    tail = 📖
+    结果：head=⭐, tail=📖, listSize=2
+
+    [⭐] ⇄ [📖]
+     ↑      ↑
+    head   tail
+
+  第 3 次 push (🖼)：
+    node->prev = 📖
+    node->next = NULL
+    📖的 next = 🖼
+    tail = 🖼
+    结果：head=⭐, tail=🖼, listSize=3
+
+    [⭐] ⇄ [📖] ⇄ [🖼]
+     ↑              ↑
+    head          tail
+
+
+============================================================
+【六、clearDialog（释放）】
+============================================================
+
+场景：程序退出前，把 malloc 的所有节点还给系统。
+
+  void clearDialog() {
+      while (head) {
+          DialogNode* t = head;    // ① 记住当前节点
+          head = head->next;       // ② head 前进
+          free(t);                 // ③ 释放老的
+      }
+      tail = NULL;
+      listSize = 0;
+  }
+
+关键：
+
+  1. 必须用临时变量 t 保存 head。
+     否则先 free(head) 后再访问 head->next 会崩：
+        free(head);            // ← head 已释放
+        head = head->next;     // ← 崩溃
+
+  2. 顺序是：备份 → 前进 → 释放。
+
+  3. 循环退出后要清 tail 和 listSize，防止后续误用。
+
+
+============================================================
+【七、isPicked（查询）】
+============================================================
+
+场景：玩家从 hall 再进某章时，查这章的 A/B/C 之前拾过没。
+
+  int isPicked(int chapter, int slot) {
+      const wchar_t* targetName = itemDialogs[chapter - 1][slot].name;
+      DialogNode* p = head;
+      while (p) {
+          if (p->chapter == chapter && p->name == targetName) return 1;
+          p = p->next;
+      }
+      return 0;
+  }
+
+关键点：
+
+  1. 参数 slot = 0/1/2 表示 A/B/C。
+     用 slot 而不是直接传 name，好处：调用处代码短。
+
+  2. "p->name == targetName" 是【比较指针地址】，不是字符串比较。
+     因为：
+       itemDialogs 里的 name 字面量在只读数据段有唯一地址
+       pushDialog 时 node->name = item->name（复制的是指针）
+       所以链表里的 name 和 itemDialogs 里的 name 是同一个地址
+     直接 == 判即可，一步到位，不用 wcscmp。
+
+  3. 章号也判断的原因：不同章可能有同名物品（比如章 1 A 和章 5 C
+     都以⭐开头）。虽然它们的字面量地址不同，但保险起见双重判断。
+
+  4. 空链表时 head 是 NULL，while 不进入，直接返回 0。
+     没拾过 → 返回 0 ✓ 符合预期。
+
+
+============================================================
+【八、showOne（显示单条）】
+============================================================
+
+场景：回看界面里画一张纸条的完整内容。
+
+  void showOne(DialogNode* cur, int idx) {
+      system("cls");
+      setColor(14); gotoxy(2, 1);
+      printemoji(L"═══ 对话回放 ═══");
+      setColor(11); gotoxy(50, 1);
+      printf("[ %d / %d ]", idx, listSize);
+
+      setColor(11); gotoxy(2, 4);
+      printf("第 %d 章", cur->chapter);
+
+      setColor(14); gotoxy(2, 6);
+      printemoji(cur->name);
+
+      setColor(15);
+      for (int i = 0; i < 5; i++) {
+          if (cur->lines[i] == NULL) break;
+          gotoxy(5, 8 + i);
+          printemoji(cur->lines[i]);
+      }
+
+      setColor(8); gotoxy(2, 22);
+      printemoji(L"A/D 翻页    Q 返回");
+  }
+
+关键点：
+
+  1. 参数 cur 是"要显示哪张纸条"，idx 是"这是第几张"。
+
+  2. system("cls") 清屏。回看界面是全屏，不是右下角小框。
+
+  3. 5 行文本遍历时遇 NULL 就 break，处理不满 5 行的物品。
+
+  4. 这个函数【只负责画】，不管按键 —— 按键在 showHistory 里。
+     关注点分离：显示 vs 交互。
+
+
+============================================================
+【九、showHistory（回看主循环）】
+============================================================
+
+场景：玩家在场景/hall 里按 B 键触发。
+
+  void showHistory() {
+      if (!tail) {
+          // 空链表：显示提示后返回
+          cleararray(21, 3);
+          gotoxy(2, 22);
+          setColor(8);
+          printemoji(L"（还没拾取任何物品）");
+          clearbutter();
+          _getch();
+          cleararray(21, 3);
+          return;
+      }
+      DialogNode* cur = tail;       // 从最新开始
+      int idx = listSize;
+      while (1) {
+          showOne(cur, idx);
+          clearbutter();
+          char c = _getch();
+          if (c == 'q') break;
+          if (c == 'a' && cur->prev) { cur = cur->prev; idx--; }
+          if (c == 'd' && cur->next) { cur = cur->next; idx++; }
+      }
+  }
+
+关键点：
+
+  1. 空链表处理必须在最前面。
+     否则 cur = tail = NULL，showOne(NULL, ...) 会崩。
+
+  2. 从 tail 开始遍历：
+     玩家按 B 想看"最新的回忆"，符合直觉。
+     A 键往老的翻，D 键往新的翻。
+
+  3. "cur->prev" 存在才动 cur。
+     到第一张时 prev=NULL，按 A 无效，屏幕不变。
+     这是双向链表的核心 —— 有 prev 指针，翻页 O(1)。
+
+
+============================================================
+【十、答辩问答清单】
+============================================================
+
+Q1: 为什么用链表而不是数组？
+    拾取数量不定，链表按需 malloc，不浪费空间。
+
+Q2: 为什么用双向不用单向？
+    需要往前 / 往后翻页。双向 O(1)，单向 O(n)。
+
+Q3: pushDialog 里 if(tail)...else 处理什么？
+    空链表插入第一个：这时 tail 是 NULL，不能操作它的 next。
+    此时新节点是第一个，head 和 tail 都要指它。
+
+Q4: clearDialog 为什么用临时变量 t？
+    要先释放老节点，但 free 后不能再访问它的 next。
+    所以先 t = head 备份，让 head 前进，再 free(t)。
+
+Q5: isPicked 里 name == targetName 是比较字符串吗？
+    不是。是比较【指针地址】。因为链表里的 name 和
+    itemDialogs 里的 name 指向同一个只读数据段字面量，
+    地址相等等价于字符串相等，且比指针快很多。
+
+Q6: showHistory 从 tail 开始的意义？
+    玩家按 B 是想看最新拾的，从 tail 开始符合直觉。
+
+Q7: 按 A 到第一张再按 A 会怎样？
+    什么都不发生。cur->prev 是 NULL，条件不成立。
+
+Q8: 双向链表比单向多多少空间？
+    每个节点多一个 prev 指针（8 字节，x64 下）。
+
+Q9: 时间复杂度总结？
+    pushDialog     O(1)
+    clearDialog    O(n)
+    isPicked       O(n)
+    showOne        O(1)
+    showHistory    O(1) 每次操作（除了 showOne 内部的 O(1) 打印）
+
+
+============================================================
+【十一、附录 · 为什么有两处相同的"抹除物品"代码】
+============================================================
+
+改完之后，抹除物品的代码出现在两个地方：
+
+  ① main 里 E 交互（拾取那一刻）：
+     playItemDialog(&items[0], 14);
+     pushDialog(&items[0], currentChapter);
+     bg[ay][ax] = ' ';
+     gotoxy(ax, ay); setColor(15); printf(" ");
+     flagA = 1;
+
+  ② get_to_the_secene 里（进场景那一刻）：
+     if (*flagA && *ax >= 0) {
+         bg[*ay][*ax] = ' ';
+         gotoxy(*ax, *ay); setColor(15); printf(" ");
+     }
+
+看起来重复。但两处发生在不同时机，都必要：
+
+  ① 首次拾取：玩家刚捡完 A，抹掉屏幕上当前的 A
+  ② 二次进场：load_secene 会重新画 A（.txt 里有 A），
+     但链表说已捡过，得再抹一次
+
+关键：load_secene 只负责【无脑加载 .txt】，不知道游戏状态。
+所以每次进场景后，都要根据 flag 手动补一次抹除。
+
+数据流：
+
+  首次进 prologue:
+    load_secene 画 A → flag=0 不抹 → 玩家看到 A ✓
+
+  拾取 A:
+    playItemDialog → pushDialog → 抹 A（main 里）→ flag=1
+
+  Q 回 hall → 再进 prologue:
+    system("cls")
+    flag = isPicked(1,0) = 1
+    load_secene 画 A（又出现了）
+    if(flagA) 抹 A（get_to_the_secene 里）
+    玩家看到 A 被抹 ✓
+
+【可选优化】把抹除代码抽成小函数：
+
+  void eraseItem(char bg[20][50], int x, int y) {
+      if (x < 0) return;
+      bg[y][x] = ' ';
+      gotoxy(x, y); setColor(15); printf(" ");
+  }
+
+两处都改成调用 eraseItem(bg, ax, ay) 即可。
+
+
+============================================================
+【十二、关联笔记】
+============================================================
+
+- 笔记 12：loadScene 与指针输出参数（指针基础）
+- 笔记 13：显示层与数据层必须同步（B 键回看后为什么要重画场景）
+- 笔记 14：多层嵌套数组的初始化括号（itemDialogs 数据结构）
+
+
+============================================================

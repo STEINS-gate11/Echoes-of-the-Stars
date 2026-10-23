@@ -1,0 +1,1369 @@
+============================================================
+学习笔记 34 · 往窗口里画东西 · HDC / WM_PAINT / GDI 对象
+============================================================
+
+【日期】2026-08-08
+【关键词】★词汇4分类 · WM_PAINT · HDC · BeginPaint/EndPaint
+          TextOutW · SetTextColor · RECT · FillRect
+          CreateFontW · SelectObject 三明治 · DeleteObject
+【前置】笔记 33（窗口骨架、消息循环）
+【为什么学这个】笔记 33 结束时窗口只有一片灰。这一节让它显示文字和色块。
+
+★★ 读法建议：先读【第 0 节】把词汇分类建立起来，
+   再读后面。第 0 节没读，后面每一行都会像天书。
+   卡在某个词 → 直接翻【第 9.5 节 总词表】查。
+
+
+============================================================
+零、★★★ 万能钥匙：Windows 里的陌生词只有 4 类
+============================================================
+
+  ★★★ 看不懂 Windows 代码，99% 是【词汇】问题，不是【语法】问题。
+    先建立这个分类，后面所有代码都能自己读。
+
+    遇到不认识的词，先问：它是这 4 类里的哪一类？
+
+    类别            长相                 相当于 C 里的      例子
+    ────────────────────────────────────────────────────────────────
+    ① 类型名        全大写，常 H 开头    int / struct       HBRUSH HDC RECT
+    ② 函数名        大小写混合，动词开头  你写的 gotoxy      FillRect
+    ③ 宏 = 数字     全大写 + 下划线      #define 的常量     FW_NORMAL
+    ④ 宏 = 小函数   全大写 + 带括号      宏函数             RGB(255,0,0)
+
+  ★ 第 ③ 类笔记 33 第 3 节已经学过 —— 全大写带下划线的就是个数字。
+
+  ────────────────────────────────────────────
+  0.1 ① 类：H 开头的类型 = 句柄类型
+  ────────────────────────────────────────────
+
+    先看已经会的：
+
+      int    a;        // a 是一个整数
+      char  *p;        // p 是一个指针
+
+      格式：【类型名 变量名;】
+
+    现在对齐着看：
+
+      int    a  = 5;
+      HBRUSH br = CreateSolidBrush(...);
+      //  ↑    ↑
+      // 类型  变量名
+
+    ★★ HBRUSH 就是个类型名，地位和 int 完全一样。
+      br 只是变量名（叫 brush、叫 x 都行）。
+
+    【H 是 Handle = 句柄 = 号码牌】（笔记 33 第 4 节）
+
+    ★ 命名规律极死板：H + 那个东西的名字
+
+        词          拆开              装什么的号码牌
+        ────────────────────────────────────────────
+        HWND        H + WND(window)   一个【窗口】
+        HDC         H + DC            一块【画布】
+        HBRUSH      H + BRUSH         一支【画刷】(填色用)
+        HFONT       H + FONT          一个【字体】
+        HPEN        H + PEN           一支【画笔】(画线用)
+        HBITMAP     H + BITMAP        一张【图片】
+        HGDIOBJ     H + GDI + OBJ     【任意】GDI 对象(通用型)
+
+    ★★ 所以看到 HFONT font; 脑子里应该是：
+        "HFONT 是类型，意思是『字体的号码牌』；font 是变量名。
+          这行就是声明一个变量装字体号码牌。"
+        —— 跟 int a; 一样简单，没有任何深奥的地方。
+
+    【★ 项目里早就有了】
+
+      源.cpp 第 14 行：
+
+        void gotoxy(int x, int y) {
+            COORD pos = { (SHORT)x, (SHORT)y };
+            SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), pos);
+            //                       ↑ 这个函数返回的就是一个 HANDLE
+        }
+
+      ★ HANDLE = 最原始最通用的号码牌类型。
+        只是没起名字接住，直接塞进去了。写全就是：
+
+          HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);  // 拿号码牌
+          SetConsoleCursorPosition(h, pos);             // 用它
+
+      ★★ 已经用了三千行号码牌，只是没意识到。
+
+  ────────────────────────────────────────────
+  0.2 RECT 和 PAINTSTRUCT：这俩不是句柄，是结构体
+  ────────────────────────────────────────────
+
+    ★ 不是所有大写词都是句柄。这两个是 struct。
+
+    【项目里的 struct】
+
+      struct conver_node {
+          conver_node* prev;
+          conver_node* next;
+          ...
+      };
+
+    【RECT 是 Windows 替你定义好的】
+
+      struct RECT {
+          LONG left;      // 左边界 x
+          LONG top;       // 上边界 y
+          LONG right;     // 右边界 x
+          LONG bottom;    // 下边界 y
+      };
+
+      ★ LONG 就是 long，就是整数。
+        Windows 爱给基本类型起马甲：DWORD / UINT / LONG / SHORT
+        —— 全是整数的别名，别被吓到。
+
+    所以：
+
+      RECT r = { 40, 200, 560, 350 };
+
+      = 定义一个结构体变量，花括号一次填完 4 个成员：
+          r.left=40  r.top=200  r.right=560  r.bottom=350
+
+    ★★ 这个语法已经写过了。源.cpp 第 15、20 行：
+
+        COORD pos = { (SHORT)x, (SHORT)y };          // 结构体，2 个成员
+        CONSOLE_CURSOR_INFO info = { 1, FALSE };     // 结构体，2 个成员
+
+      RECT r = { 40,200,560,350 } 和 COORD pos = { x,y }
+      ★ 是同一种语法，只是成员从 2 个变 4 个。
+
+    【为什么传 &r】
+
+      FillRect(hdc, &r, br);
+      //             ↑ 取地址
+
+      ★ 因为函数要的是结构体【地址】，不是结构体本身。
+        已经写过无数次：
+
+          scanf("%d", &x);
+          insert_tail(&item[0], cur_chapter);   // 自己的代码
+
+      ★ 记法：参数写 & 的地方 = "东西放这儿了，你自己去看"。
+
+    【PAINTSTRUCT ps 同理】
+
+      也是 Windows 定义的结构体，BeginPaint 往里填东西。
+      ★ 不需要知道里面有什么。声明、传 &ps、走。
+        地位和 COORD pos 完全一样 —— API 索要的容器，不是要读的数据。
+
+  ────────────────────────────────────────────
+  0.3 ③ 类：全大写常量 = 数字
+  ────────────────────────────────────────────
+
+    Windows 头文件里就是这么写的：
+
+      #define TRANSPARENT   1
+      #define OPAQUE        2
+      #define FW_NORMAL     400
+      #define FW_BOLD       700
+      #define FALSE         0
+
+    ★★ 所以这两行完全等价：
+
+        SetBkMode(hdc, TRANSPARENT);
+        SetBkMode(hdc, 1);            // 能编译，能跑，效果一样
+
+    ★ 它们不神秘，就是给数字起了个读得懂的名字。
+
+      FW_NORMAL=400 / FW_BOLD=700 是字体粗细的标准刻度
+      （和网页 CSS 的 font-weight 是同一套数）。
+
+  ────────────────────────────────────────────
+  0.4 ④ 类：RGB(r,g,b) 是宏函数
+  ────────────────────────────────────────────
+
+    ★ 长得像函数，其实是宏，展开后就是一次算术：
+
+      RGB(20, 30, 60)
+      // 展开 ≈ 20 | (30 << 8) | (60 << 16)
+      // 结果 = 一个整数
+
+    ★★ 所以这两行等价：
+
+        SetTextColor(hdc, RGB(255, 0, 0));
+        SetTextColor(hdc, 255);            // 一样是红色
+
+      只不过【没人看得懂第二行】，所以才有 RGB 这个宏。
+
+    【接颜色的类型】
+
+      COLORREF c = RGB(255, 0, 0);
+
+      ★ COLORREF 又是马甲，本质 unsigned int。
+
+      ★★ 所以颜色在 Windows 眼里【就是一个整数】。
+        跟 setColor(14) 里那个 14 性质完全相同 ——
+        都是用数字表示颜色，只是控制台认 0~15，窗口认 1600 万个。
+
+  ────────────────────────────────────────────
+  0.5 ★★ 三句话总结
+  ────────────────────────────────────────────
+
+    ① H 开头的都是类型名，装"号码牌"，用起来跟 int 一样
+    ② 全大写带下划线的都是数字，TRANSPARENT 就是 1
+    ③ 函数名都是英文单词拼的，FillRect = 填+矩形
+
+  ★★★ 这份笔记里【没有一个新的 C 语法】。全部是：
+
+        类型名 变量名 = 函数名(参数);
+
+    —— 写过几千遍的东西。
+       陌生感 100% 来自【词汇】，不是来自【语法】。
+
+
+============================================================
+一、先看一个"字会消失"的实验
+============================================================
+
+    #include <windows.h>
+
+    LRESULT CALLBACK MyProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+    {
+        switch (msg) {
+        case WM_DESTROY:
+            PostQuitMessage(0);
+            return 0;
+        }
+        return DefWindowProcA(hwnd, msg, wp, lp);
+    }
+
+    int main(void)
+    {
+        WNDCLASSA wc = { 0 };
+        wc.lpfnWndProc   = MyProc;
+        wc.hInstance     = GetModuleHandleA(NULL);
+        wc.lpszClassName = "MyWin";
+        wc.hbrBackground = (HBRUSH)GetStockObject(GRAY_BRUSH);
+        RegisterClassA(&wc);
+
+        HWND hwnd = CreateWindowA("MyWin", "我的窗口",
+            WS_OVERLAPPEDWINDOW, 100, 100, 600, 400,
+            NULL, NULL, wc.hInstance, NULL);
+        ShowWindow(hwnd, SW_SHOW);
+
+        /* ★ 在这儿画一行字 ★ */
+        HDC hdc = GetDC(hwnd);
+        TextOutA(hdc, 50, 50, "星空回响", 8);
+        ReleaseDC(hwnd, hdc);
+
+        MSG msg;
+        while (GetMessageA(&msg, NULL, 0, 0)) {
+            TranslateMessage(&msg);
+            DispatchMessageA(&msg);
+        }
+        return 0;
+    }
+
+  字出来了。然后试这三件事：
+
+    1. 用别的窗口盖住那行字，再移开   → 字没了
+    2. 把窗口最小化再恢复             → 字没了
+    3. 拖着边框改一下大小             → 字没了
+
+  ★★ 这不是 bug，这是窗口的本性。
+
+
+============================================================
+二、为什么会消失 —— 和控制台的根本差别
+============================================================
+
+  【控制台为什么不会】
+
+    项目里写：
+
+      gotoxy(4, 2);
+      printemoji(L"你走到了天台。");
+
+    被别的窗口盖住再移开，字还在。什么都不用做。
+
+    ★ 因为控制台的内容存在【系统维护的一张格子表】里 ——
+      60×25 个格子，每格记着「一个字符 + 一个颜色」。
+
+      printemoji 是在改这张表。
+      系统负责照表画像素。
+
+      被遮住 → 表没变 → 遮挡物走了 → 系统照表重画。
+
+    ★ 所以从来不用管"重画"这件事。
+
+  【窗口没有这张表】
+
+    ★★ 窗口只有【像素】。
+
+    别的窗口盖上来又移走，那块区域的像素就是垃圾了。
+
+    系统【不会】替你恢复 —— 它不知道你画的是什么，
+    只看到一堆颜色，没法推断原样。
+
+    它只能做一件事：【发一条 WM_PAINT 消息通知你】
+    "你那块脏了，麻烦重画一下"。
+
+  【上面那个程序为什么字被擦掉】
+
+    没有处理 WM_PAINT，消息落到 DefWindowProcA，
+    它的默认行为是【用 hbrBackground 填满】—— 就是那个 GRAY_BRUSH。
+
+    所以字被灰色刷掉了。
+
+  ★★ 这就是控制台和窗口最本质的差别，一句话记住：
+
+      控制台 = 系统替你存了一张表，你只管改表
+      窗口   = 只有像素，脏了系统喊你重画，你得自己有得可画
+
+
+============================================================
+三、正确做法：所有绘制都在 WM_PAINT 里
+============================================================
+
+    LRESULT CALLBACK MyProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+    {
+        switch (msg) {
+
+        case WM_PAINT: {                          /* ★ */
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(hwnd, &ps);
+
+            TextOutA(hdc, 50, 50, "星空回响", 8);
+
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+
+        case WM_DESTROY:
+            PostQuitMessage(0);
+            return 0;
+        }
+        return DefWindowProcA(hwnd, msg, wp, lp);
+    }
+
+  ★ 现在怎么遮挡、怎么改大小、怎么最小化，字都在。
+
+    因为每次窗口脏了，Windows 就发 WM_PAINT，就重画一遍。
+
+  ★★★ 窗口编程的核心规矩：
+
+        所有绘制都在 WM_PAINT 里做。别处不画。
+
+  【注意 case 后面那对花括号】
+
+      case WM_PAINT: {
+          PAINTSTRUCT ps;
+          ...
+      }
+
+    ★ 这对花括号是【必需的】。
+      因为 case 里声明了变量（ps、hdc），
+      C 里 case 标签后面不能直接跟声明，得开一个块。
+
+
+============================================================
+四、HDC 是什么 —— 画布 + 一套画具
+============================================================
+
+  ★★ 不能直接往 HWND 上画。窗口不提供画的接口。
+
+    要画得先拿一个 HDC —— Device Context，设备上下文。
+
+    把它想成【一块画布 + 一套画具】的句柄。
+
+  所有画图函数的第一个参数都是它：
+
+      TextOutA(hdc, ...);      // 在 hdc 上写字
+      Rectangle(hdc, ...);     // 在 hdc 上画矩形
+      FillRect(hdc, ...);      // 在 hdc 上填色块
+      BitBlt(hdc, ...);        // 在 hdc 上拷贝像素
+
+  ★ 跟句柄的规律一致（笔记 33 第 4 节）：句柄永远第一个参数。
+
+  ────────────────────────────────────────────
+  4.1 拿 HDC 有两种方式，别混
+  ────────────────────────────────────────────
+
+      场合                拿                    还
+      ────────────────────────────────────────────────────────
+      在 WM_PAINT 里      BeginPaint(hwnd,&ps)  EndPaint(hwnd,&ps)
+      在别的地方          GetDC(hwnd)           ReleaseDC(hwnd,hdc)
+
+  ★ 借了必须还。
+
+    DC 来自系统一个【有限的池子】，不还会耗尽
+    —— 程序跑久了就画不出东西了。
+
+    （又是 malloc / free 那套纪律。Windows 编程里到处都是。）
+
+  ────────────────────────────────────────────
+  4.2 ★ WM_PAINT 里为什么必须用 BeginPaint
+  ────────────────────────────────────────────
+
+    因为 BeginPaint 多干一件事：【把"脏区域"标记清掉】。
+
+    Windows 记着"这个窗口有一块脏了"。
+    不清这个标记，它认为你没画完，【会一直发 WM_PAINT】
+    —— 死循环，CPU 跑满。
+
+  【实验】把 WM_PAINT 里的 BeginPaint/EndPaint
+          换成 GetDC/ReleaseDC，跑起来看任务管理器
+          → CPU 一个核满载。
+
+  【PAINTSTRUCT ps 是什么】
+
+    就是个结构体。
+    BeginPaint 往里填信息（比如脏区域的坐标），EndPaint 要用。
+
+    ★ 不用看里面，声明出来传地址就行。
+
+
+============================================================
+五、TextOut —— 写字
+============================================================
+
+      TextOutA(hdc, 50, 50, "星空回响", 8);
+      //        ↑    ↑   ↑      ↑        ↑
+      //      画布   x   y    字符串    长度
+
+  ★ 坐标是【像素】，原点在窗口客户区的左上角。
+
+    —— 和控制台的 gotoxy(4, 2) 是"第 4 列第 2 行"不一样。
+       控制台按格子，窗口按像素。
+
+  【最后那个长度参数】
+
+    "星空回响" 是 char*，一个中文占 2 字节，4 个字 = 8。
+
+    ★ 这个很容易数错。用 strlen 更稳：
+
+      const char *s = "星空回响";
+      TextOutA(hdc, 50, 50, s, (int)strlen(s));
+
+      （要 #include <string.h>）
+
+  ────────────────────────────────────────────
+  5.1 换成宽字符版 TextOutW（项目实际要用的）
+  ────────────────────────────────────────────
+
+    项目全用 L"..."，所以实际会用 W 版：
+
+      const wchar_t *s = L"星空回响";
+      TextOutW(hdc, 50, 50, s, (int)wcslen(s));      // 长度是 4
+
+    ★ wcslen 数的是【字数】，不是字节数，比 strlen 直观。
+      这也是宽字符的好处之一。（见笔记 07、26）
+
+      要 #include <wchar.h> —— 源.cpp 已经 include 了。
+
+
+============================================================
+六、★ 颜色和字体是"状态"，不是参数
+============================================================
+
+  注意 TextOutA 的参数里【没有颜色，也没有字体】。
+
+  那怎么改颜色？★ 先设状态，再画：
+
+      case WM_PAINT: {
+          PAINTSTRUCT ps;
+          HDC hdc = BeginPaint(hwnd, &ps);
+
+          SetTextColor(hdc, RGB(255, 0, 0));        /* 设成红色 */
+          TextOutA(hdc, 50, 50, "红色的字", 8);
+
+          SetTextColor(hdc, RGB(0, 128, 255));      /* 设成蓝色 */
+          TextOutA(hdc, 50, 80, "蓝色的字", 8);
+
+          EndPaint(hwnd, &ps);
+          return 0;
+      }
+
+  ★★ 这个模式项目里已经用熟了：
+
+      setColor(14);              // 先设颜色
+      printemoji(L"星星");        // 再输出，用的是刚设的颜色
+
+    一模一样。SetTextColor 就是窗口版的 setColor。
+
+    ┌────────────────────────────────────────┐
+    │  控制台                窗口              │
+    │  setColor(14);   →    SetTextColor(...); │
+    │  printemoji(s);  →    TextOutW(...);     │
+    └────────────────────────────────────────┘
+
+    ★ "先设状态，再执行动作" —— GDI 一贯的风格。
+
+  ────────────────────────────────────────────
+  6.1 RGB(r, g, b)
+  ────────────────────────────────────────────
+
+    一个宏，三个 0~255 的数拼成一个颜色：
+
+      RGB(255,   0,   0)      红
+      RGB(  0, 255,   0)      绿
+      RGB(  0,   0, 255)      蓝
+      RGB(255, 255, 255)      白
+      RGB(  0,   0,   0)      黑
+      RGB(255, 224, 130)      淡金色（项目里她的名牌色）
+
+    ★ 比控制台那 16 色自由多了。
+      setColor(14) 只能选编号，这里能调任意颜色。
+
+  ────────────────────────────────────────────
+  6.2 SetBkMode —— 去掉文字背后的难看色块
+  ────────────────────────────────────────────
+
+    默认写字会带一块背景色方块，很难看。加这一句：
+
+      SetBkMode(hdc, TRANSPARENT);      /* 文字背景透明 */
+
+    ★ 实验：注释掉它，会看到字下面有块白底。
+
+    ★ 这一句在 galgame 里必须有 —— 台词是压在 CG 上面的，
+      带白底就全毁了。
+
+
+============================================================
+七、画方块 —— 对话框底板
+============================================================
+
+      case WM_PAINT: {
+          PAINTSTRUCT ps;
+          HDC hdc = BeginPaint(hwnd, &ps);
+
+          /* 深蓝色的实心矩形 */
+          HBRUSH br = CreateSolidBrush(RGB(20, 30, 60));
+          RECT r = { 40, 200, 560, 350 };            /* 左 上 右 下 */
+          FillRect(hdc, &r, br);
+          DeleteObject(br);                          /* ★ 造了就要删 */
+
+          /* 在方块上写字 */
+          SetBkMode(hdc, TRANSPARENT);
+          SetTextColor(hdc, RGB(255, 255, 255));
+          TextOutA(hdc, 60, 220, "这里是对话框", 12);
+
+          EndPaint(hwnd, &ps);
+          return 0;
+      }
+
+  跑出来是一个深蓝方块加白字 —— ★ galgame 对话框的雏形。
+
+  ────────────────────────────────────────────
+  7.0 ★★ 逐字拆解：每一个词是什么
+  ────────────────────────────────────────────
+
+  ★ 用第 0 节的 4 类分类法，一个词一个词过。
+
+  ┌─ HBRUSH br = CreateSolidBrush(RGB(20, 30, 60)); ─┐
+
+      词                  类别        意思
+      ──────────────────────────────────────────────────────
+      HBRUSH              ① 类型      "画刷号码牌"类型，地位同 int
+      br                  变量名      自己起的，随便叫
+      CreateSolidBrush    ② 函数      Create(造)+Solid(实心)+Brush(画刷)
+      RGB(20,30,60)       ④ 宏函数    算出一个颜色整数（深蓝）
+
+    ★ 整行读作：
+      造一支深蓝色实心画刷，把它的号码牌存进变量 br。
+
+    ★ 为什么需要"画刷"这个概念？
+      因为填色得有个"用什么填"的东西 —— 像刷墙要有刷子。
+      Windows 把"填充材料"抽象成了画刷。
+
+  ┌─ RECT r = { 40, 200, 560, 350 }; ─┐
+
+    ★ 定义一个矩形结构体变量 r，四个成员依次是
+      左40 上200 右560 下350。
+
+    ★★ 不是 位置(40,200) + 尺寸(560,350)。是四条边的坐标。
+      宽 = 560-40 = 520，高 = 350-200 = 150。
+
+  ┌─ FillRect(hdc, &r, br); ─┐
+
+      词          类别            意思
+      ──────────────────────────────────────────
+      FillRect    ② 函数          Fill(填) + Rect(矩形)
+      hdc         变量(HDC)       画在哪块画布上
+      &r          取地址          填哪个范围
+      br          变量(HBRUSH)    用哪支刷子
+
+    ★ 整行读作：
+      在画布 hdc 上，把 r 这个范围，用 br 这支刷子填满。
+
+    ★★ 注意 hdc 在第一个 —— 笔记 33 的死规律：句柄永远第一个参数。
+      自己的 SetConsoleTextAttribute(GetStdHandle(...), c) 也是句柄在前。
+
+  ┌─ DeleteObject(br); ─┐
+
+    ★ Delete(删) + Object(对象)。把画刷销毁，还内存。
+
+    ★★ 就是画刷版的 free：
+
+        node = (conver_node*)malloc(...);   →   br = CreateSolidBrush(...);
+        free(node);                         →   DeleteObject(br);
+
+    ★ 为什么不叫 DeleteBrush？
+      因为【一个函数管所有 GDI 对象】（画刷/字体/画笔/图片都用它删），
+      所以叫通用的 Object。
+
+  ┌─ SetBkMode(hdc, TRANSPARENT); ─┐
+
+      部分           拆解
+      ──────────────────────────────────────────
+      Set            设置
+      Bk             Background 的缩写（Windows 爱缩写）
+      Mode           模式
+      TRANSPARENT    ③ 宏，就是 1，意思"透明"
+
+    ★ 整行：把画布 hdc 的"文字背景模式"设成透明。
+
+    ★★ 注意这个函数【没有画任何东西】，它只改了 hdc 的一个状态。
+      —— 这就是第六节讲的「先设状态，再画」。
+
+  ┌─ SetTextColor(hdc, RGB(255, 255, 255)); ─┐
+
+    ★ 把画布的"当前文字颜色"设成白色。同样【没画东西，只改状态】。
+
+    ★★ 这一句其实已经认识 —— 它就是：
+
+        setColor(15);      // 自己的写法（15 = 白）
+
+  ┌─ TextOutA(hdc, 60, 220, "这里是对话框", 12); ─┐
+
+      位置   值                  意思
+      ──────────────────────────────────────────
+      1      hdc                 画在哪
+      2      60                  x = 左边 60 像素
+      3      220                 y = 上边 220 像素
+      4      "这里是对话框"      内容
+      5      12                  长度（6 个中文 × 2 字节）
+
+    ★ 名字拆解：Text(文字) + Out(输出) + A（A 版，配 "..."；
+      W 版配 L"..."，见笔记 33 第 2 节）。
+
+    ★★ 它才是真正画东西的那一句。前面两句只是在调状态。
+
+    ★ 对应自己的两句：
+
+        gotoxy(4, 2);              ┐
+        printemoji(L"...");        ┘ 合起来 = TextOutW(hdc,x,y,s,n)
+
+  ────────────────────────────────────────────
+  7.1 ★ RECT 是"左上右下"，不是"左上宽高"
+  ────────────────────────────────────────────
+
+      RECT r = { 40, 200, 560, 350 };
+      //        left  top  right bottom
+
+    ★★ 这个特别容易错。它是【四个坐标】，不是位置 + 尺寸。
+
+      宽 = 560 - 40  = 520
+      高 = 350 - 200 = 150
+
+    想按"位置 + 尺寸"思考的话自己算：
+
+      int x = 40, y = 200, w = 520, h = 150;
+      RECT r = { x, y, x + w, y + h };
+
+  ────────────────────────────────────────────
+  7.2 CreateSolidBrush / DeleteObject
+  ────────────────────────────────────────────
+
+      HBRUSH br = CreateSolidBrush(RGB(20, 30, 60));    // 造
+      FillRect(hdc, &r, br);                            // 用
+      DeleteObject(br);                                 // 删
+
+    ★ 画刷（HBRUSH）是【GDI 对象】，造了必须删。
+
+    不删就泄漏。
+    ★★ 而 WM_PAINT 会被【反复调用】（每次遮挡、每次改大小），
+      漏一次不要紧，漏一千次就出问题了。
+
+    —— 和 malloc / free 一样的纪律，但发生频率高得多。
+
+  ────────────────────────────────────────────
+  7.3 ★ 但 GetStockObject 拿的不用删
+  ────────────────────────────────────────────
+
+      HBRUSH b = (HBRUSH)GetStockObject(BLACK_BRUSH);
+      // 不用 DeleteObject —— 这是系统的公共库存，不是你造的
+
+  ★★ 分界线记住：
+
+      函数名里有 Create 的  = 你造的   = 你删
+      GetStockObject 拿的   = 公共的   = 不删
+
+
+============================================================
+八、字体 HFONT —— 第一次遇到"三明治"
+============================================================
+
+  默认字体又小又难看。造一个大的：
+
+      case WM_PAINT: {
+          PAINTSTRUCT ps;
+          HDC hdc = BeginPaint(hwnd, &ps);
+
+          /* ① 造字体 */
+          HFONT font = CreateFontW(
+              -40,                /* 高度，负数 = 按字符高度算 */
+              0, 0, 0,
+              FW_NORMAL,          /* 粗细，FW_BOLD 是粗体 */
+              FALSE, FALSE, FALSE,
+              DEFAULT_CHARSET,
+              OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
+              CLEARTYPE_QUALITY,  /* 抗锯齿 */
+              DEFAULT_PITCH,
+              L"微软雅黑");       /* 字体名 */
+
+          /* ② 换进 hdc，接住旧的 ★ */
+          HFONT old = (HFONT)SelectObject(hdc, font);
+
+          /* ③ 画 */
+          SetBkMode(hdc, TRANSPARENT);
+          SetTextColor(hdc, RGB(255, 224, 130));
+          TextOutW(hdc, 50, 50, L"星空回响", 4);
+
+          /* ④ 换回旧的 ★ */
+          SelectObject(hdc, old);
+
+          /* ⑤ 删 */
+          DeleteObject(font);
+
+          EndPaint(hwnd, &ps);
+          return 0;
+      }
+
+  ────────────────────────────────────────────
+  8.0 ★★ 逐字拆解
+  ────────────────────────────────────────────
+
+  ┌─ HFONT font = CreateFontW(-40, 0,0,0, FW_NORMAL, ...); ─┐
+
+      词                  类别        意思
+      ──────────────────────────────────────────────────────
+      HFONT               ① 类型      "字体号码牌"类型
+      font                变量名      随便起的
+      CreateFontW         ② 函数      Create+Font+W（因为字体名要写 L"..."）
+      -40                 数字        字高 40 像素（负号 = "纯字高"）
+      FW_NORMAL           ③ 宏        就是 400，常规粗细
+      FALSE               ③ 宏        就是 0
+      DEFAULT_CHARSET 等  ③ 宏        都是数字，★ 照抄
+
+    ★★ 那一长串 0,0,0,FALSE,FALSE,FALSE,DEFAULT_CHARSET,
+      OUT_TT_PRECIS,CLIP_DEFAULT_PRECIS,DEFAULT_PITCH
+      —— 全是数字，全部照抄，一个都不用懂。
+
+      它们是 1985 年为兼容各种打印机留下的历史包袱。
+      ★ 14 个参数里 10 个是噪音。
+
+  ┌─ HFONT old = (HFONT)SelectObject(hdc, font); ─┐
+
+      部分            是什么
+      ──────────────────────────────────────────────────
+      HFONT old       声明一个字体号码牌变量，名叫 old
+      SelectObject    ② 函数：Select(选中/装上) + Object(对象)
+      hdc             装到哪块画布上
+      font            装什么
+      (HFONT)         强制类型转换
+
+    ★ 整行读作：
+      把 font 这个字体装到画布 hdc 上；
+      同时它会【返回原来装着的那个字体】，我用 old 接住。
+
+    【★ 那个 (HFONT) 强转，已经会了】
+
+        node = (conver_node*)malloc(sizeof(conver_node));
+        //     ↑ 自己代码里的强转
+
+      ★ malloc 返回通用的 void*，得转成具体类型 conver_node*。
+
+      ★★ 同理：SelectObject 返回通用的 HGDIOBJ
+        （Handle to GDI OBJect，"任意 GDI 对象的号码牌"），
+        得转成具体的 HFONT。—— 一模一样的道理。
+
+  ┌─ SelectObject(hdc, old);  /  DeleteObject(font); ─┐
+
+    ★ 为什么必须先把旧的装回去？
+      因为 GDI 规定：【正装在画布上的东西删不掉】。
+
+    ★★ 现实类比：
+        刷子还插在油漆桶里，没法把刷子扔了。
+        得先把刷子拿出来（换回旧的），才能扔（删）。
+
+      而 Windows 的坑在于：硬扔它【不吭声】，
+      返回个 FALSE 就完了，程序照样跑，界面照样对，内存慢慢漏。
+
+    ★ 所以"三明治"四步的本质：
+
+        ① 装上新的，记住旧的
+        ② 用
+        ③ 把旧的装回去（新的自由了）
+        ④ 删掉新的
+
+  ────────────────────────────────────────────
+  8.1 CreateFontW 的 14 个参数：只管 4 个
+  ────────────────────────────────────────────
+
+      位置  值                    意思
+      ────────────────────────────────────────────────────────
+       1    -40                   字高。★ 用负数
+       5    FW_NORMAL             粗细。FW_BOLD = 粗体
+      12    CLEARTYPE_QUALITY     抗锯齿，字边缘平滑
+      14    L"微软雅黑"           字体名
+
+    ★ 为什么字高用负数：
+        负数 = "字符本身的高度"
+        正数 = "包含行间距的总高度" → 实际字会偏小
+
+      所以要 40 像素的字，写 -40。
+
+    ★ 中间那一堆 0, 0, 0, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+      OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_PITCH
+      —— 【全部照抄】。
+
+  ────────────────────────────────────────────
+  8.2 参数太多 → 包成一个函数
+  ────────────────────────────────────────────
+
+      HFONT make_font(int px, int bold)
+      {
+          return CreateFontW(-px, 0, 0, 0, bold ? FW_BOLD : FW_NORMAL,
+                             FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                             OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
+                             CLEARTYPE_QUALITY, DEFAULT_PITCH, L"微软雅黑");
+      }
+
+    然后用起来就清爽了：
+
+      HFONT f1 = make_font(40, 0);     /* 40 像素，不加粗 */
+      HFONT f2 = make_font(24, 1);     /* 24 像素，加粗 */
+
+    ★ 这是项目里一贯的做法 —— 参数烦的 API 包一层
+      （gotoxy、setColor、printemoji 都是这么来的）。
+
+  ────────────────────────────────────────────
+  8.3 ★★★ 重点：为什么要 old = SelectObject(...) 再换回来
+  ────────────────────────────────────────────
+
+  这是这一节最重要的知识点。GDI 有一条阴险的规则：
+
+    ★★★ 正被 DC 用着的对象，DeleteObject 会【失败】。
+
+      SelectObject(hdc, font);      // font 现在插在 hdc 上
+      DeleteObject(font);           // ✗ 失败！
+
+    ★★ 它【不报错、不崩溃、不警告】。
+      就是静静地返回 FALSE，那块内存永远回不来。
+
+    这是 GDI 最坑的地方 —— 程序能跑，看不出问题，但内存一点点漏。
+
+  【怎么正确删】
+
+    SelectObject 有个设计：★ 它【返回被换下来的旧对象】。
+
+    所以标准写法是这个"三明治"：
+
+      HFONT old = (HFONT)SelectObject(hdc, font);   // 换进去，接住旧的
+          ...画...
+      SelectObject(hdc, old);                        // 换回来 → font 自由了
+      DeleteObject(font);                            // ✓ 现在能删了
+
+  ★★ 以后在任何 GDI 代码里看到 old = SelectObject(...)：
+
+      那不是啰嗦，那是【为了能删掉】。
+
+  【那个强转】
+
+      (HFONT)SelectObject(...)
+
+    因为 SelectObject 返回通用类型 HGDIOBJ，得转回具体类型。
+
+  ────────────────────────────────────────────
+  8.4 SelectObject 能换的四种东西
+  ────────────────────────────────────────────
+
+    DC 有几个"当前工具"的插槽：
+
+      当前字体   HFONT      影响 TextOut
+      当前画笔   HPEN       影响画线、画边框
+      当前画刷   HBRUSH     影响填充
+      当前位图   HBITMAP    只有内存 DC 才有（下一份笔记讲）
+
+    ★ SelectObject 是通用的，插哪个槽由传进去的对象类型决定。
+
+  ────────────────────────────────────────────
+  8.5 ★★★ 追问：为什么"必须"三明治？—— 两个独立的理由
+  ────────────────────────────────────────────
+
+  【理由一：装着的删不掉 —— 硬规则】
+
+    ★ 用链表想一下就懂了：
+
+        tail->next = node;      // 链表里存着 node 的地址
+        free(node);             // 内存还了
+        // 现在 tail->next 是野指针 → 下次遍历直接崩
+
+    ★★ hdc 里存的【就是】font 的地址。
+      删了 font，hdc 手里就是个野指针,
+      下一次 TextOutW 会拿这个野指针去找字体信息。
+
+    ★ 所以 GDI 干脆不让你删："这东西还有人在用,我不给你删。"
+
+      它选择了"拒绝删除"而不是"让你崩溃"。
+      ★★ 代价就是【静默泄漏】—— 完全看不出来。
+
+  【★★ old 不是可选的记账，是唯一的出路】
+
+    关键事实：★★ DC 的字体插槽里【永远有东西】,不存在"空"状态。
+
+        DC 刚拿到手：
+          字体插槽 → [SYSTEM_FONT]     ← 系统默认字体,本来就在里面
+
+        SelectObject(hdc, font) 之后：
+          字体插槽 → [font]            ← 你的字体
+          返回值   →  SYSTEM_FONT      ← 被挤出来的那个
+
+    ★ 插槽【不能清空,只能替换】。
+      要让 font 脱离 DC,唯一办法是往里塞另一个。
+
+    ★★ 而你要塞什么进去？【必须是原来那个】—— 所以必须先接住它。
+
+        HFONT old = (HFONT)SelectObject(hdc, font);
+        // ↑ 不接住，就永远不知道该塞什么回去
+
+    ★★★ 这就是 old 存在的全部意义。
+      它不是"良好习惯"，是【没有它你就删不掉了】。
+
+  【★ 诚实地说：严格来讲三明治不是唯一正确写法】
+
+    因为 SelectObject 装新的时候会自动挤走旧的,
+    所以下面这样写【也是正确的】,也不泄漏：
+
+      HFONT old = (HFONT)SelectObject(hdc, f1);
+      TextOutW(...);                                 // 用 f1
+      SelectObject(hdc, f2);   DeleteObject(f1);      // f2 挤走 f1 → f1 能删
+      TextOutW(...);                                 // 用 f2
+      SelectObject(hdc, f3);   DeleteObject(f2);      // f3 挤走 f2 → f2 能删
+      TextOutW(...);                                 // 用 f3
+      SelectObject(hdc, old);  DeleteObject(f3);      // 收尾
+
+    ★ 少了几行。那为什么不这么写？
+
+      对比项                  三明治      接力写法
+      ──────────────────────────────────────────────────────
+      每块能单独复制粘贴      ✓          ✗ 删除动作跨块
+      能调换顺序              ✓          ✗ 一调就漏或删错
+      中间能插一块新的        ✓          ✗ 要重排所有 Delete
+      能提成函数              ✓          ✗ 删除语句被切成两半
+      中间 return 会怎样      只漏一个    漏一串
+
+    ★★★ 三明治的价值不在"最短"，在【每一块是闭合的、自给自足的】：
+
+          进来时 DC 是什么样，出去时还是什么样。
+
+      ★ 满足这一条，块与块之间就完全无关,
+        随便加、删、换顺序、包成函数都不会出错。
+
+    ★★ 这个教训在链表那边已经吃过 ——
+      bg[ay][ax]=' ' 和 gotoxy+printf(" ") 必须成对出现
+      (笔记 13 那个 "D 消失" 的 bug)，漏一半就出问题。
+      【成对操作要写在一起】，同一个道理。
+
+  【★★ 理由二：不换回来会污染状态】
+
+    这个理由和"删"无关,但一旦开始写函数就会撞上。
+
+      void draw_title(HDC hdc)
+      {
+          HFONT big = make_font(44, 0);
+          SelectObject(hdc, big);        /* ← 没接住旧的、没换回来 */
+          SetTextColor(hdc, RGB(255, 224, 130));
+          TextOutW(hdc, 50, 40, L"星空回响", 4);
+      }                                  /* 没恢复，没删除 */
+
+    调用：
+
+      draw_title(hdc);
+      TextOutW(hdc, 60, 275, L"「你袖子上有墨水。」", 10);  /* 想用小字 */
+
+    ★★ 结果：台词变成了 44 像素的巨大金字。
+      因为 hdc 里那个 44px 字体【还装着】。
+
+    ★ 这种 bug 的特征：
+        · 你改的是 A 处，坏的是 B 处
+        · B 处代码一个字没动
+        · 你会盯着 B 处看半天
+
+    ★★★ 这就是 setColor 上已经遇到过的坑：
+
+        setColor(12);            忘了改回来  →  后面全红
+        SelectObject(hdc, big);  忘了换回来  →  后面全是 44px
+
+      【完全一样】。GDI 的状态和控制台的颜色状态是同一种东西：
+      ★ 设了就一直有效，直到有人改它。
+
+    ★ 所以"换回来"有双重作用：
+        ① 让新字体自由 → 能删
+        ② 把 DC 恢复原样 → 不污染后面
+
+  ────────────────────────────────────────────
+  8.6 ★★★ 更好的办法：字体只造一次（项目实际要用的）
+  ────────────────────────────────────────────
+
+  ★ 先看问题的根源：因为字体是【在 WM_PAINT 里造的】,
+    所以才要在 WM_PAINT 里删,所以才要三明治。
+
+  ★★ 但 WM_PAINT 会被反复调用几百次 ——
+    每次都造一遍字体又删掉,【本身就很蠢】。
+
+  ★★★ 正确做法：字体只造一次,程序开头造,结尾删。
+
+      /* ── 全局，只造一次 ── */
+      static HFONT g_ft = NULL;      /* 台词字体 */
+      static HFONT g_fn = NULL;      /* 名字字体 */
+
+      int main(void)
+      {
+          ...创建窗口...
+
+          g_ft = make_font(26, 0);           /* ★ 造一次 */
+          g_fn = make_font(22, 1);
+
+          ...消息循环...
+
+          DeleteObject(g_ft);                /* ★ 删一次 */
+          DeleteObject(g_fn);
+          return 0;
+      }
+
+  那 WM_PAINT 里就只剩：
+
+      case WM_PAINT: {
+          PAINTSTRUCT ps;
+          HDC hdc = BeginPaint(hwnd, &ps);
+          SetBkMode(hdc, TRANSPARENT);
+
+          SelectObject(hdc, g_fn);                  /* 换字体，不接旧的 */
+          SetTextColor(hdc, RGB(255, 224, 130));
+          TextOutW(hdc, 60, 238, L"她", 1);
+
+          SelectObject(hdc, g_ft);                  /* 直接换下一个 */
+          SetTextColor(hdc, RGB(255, 255, 255));
+          TextOutW(hdc, 60, 275, L"「你袖子上有墨水。」", 10);
+
+          EndPaint(hwnd, &ps);      /* DC 还回去，状态自动重置 */
+          return 0;
+      }
+
+  ★★ 为什么这里可以不写三明治：
+
+      三明治的两个理由        这里为什么不需要
+      ──────────────────────────────────────────────────────────
+      ① 为了能删              在这里【根本不删】—— 字体活到程序结束
+      ② 为了不污染            BeginPaint 拿的是"公共 DC"，
+                              EndPaint 还回去时状态自动重置
+
+  ★ 但注意 —— 三明治并没消失，只是【搬家】了。
+    程序结束那两句 DeleteObject 之前,必须确保字体不在任何 DC 里。
+    这里因为 EndPaint 已经把 DC 还了,所以是安全的。
+
+  ★★★ 【自己那份 test.cpp(cg_ 模块)正是这个结构】
+
+      static HFONT cg_ft, cg_fn;      /* 全局，两个字体 */
+
+      cg_open()   →  cg_ft = cg_make_font(...);   /* 造一次 */
+      cg_close()  →  DeleteObject(cg_ft);         /* 删一次 */
+
+    ★ 但它那个 DC 是 CreateCompatibleDC 造的【自己的 DC】(不是借的),
+      一直活着不还 —— 所以在 cg_close 里删字体之前,
+      【必须】先把字体从 DC 里换出来：
+
+        SelectObject(cg_bdc, GetStockObject(SYSTEM_FONT));  /* ★ 先换走 */
+        DeleteObject(cg_ft);                                /* 才能删 */
+        DeleteObject(cg_fn);
+
+    ★★ 这就是 test.cpp 里【GDI 泄漏】的位置之一 ——
+      它直接删了,没先换走,所以两个字体每次都白删一遍。
+
+  ────────────────────────────────────────────
+  8.7 ★★★ 一句话总结：分场景记
+  ────────────────────────────────────────────
+
+      场景                              写法
+      ──────────────────────────────────────────────────────────
+      字体【用完就删】(临时造的)        必须三明治 —— 装着的删不掉
+      字体【活到程序结束】(全局造一次)  SelectObject 直接换，不接旧的
+      但【删之前】                      一定先从 DC 里换走(三明治后半段)
+
+  ★★ 更本质的一句：
+
+      SelectObject 的返回值不是附赠品,
+      它是"把 DC 恢复原样"的【唯一凭据】。
+      ★ 什么时候需要恢复原样 → 什么时候就需要接住它。
+
+
+============================================================
+九、把这一节拼起来 —— galgame 界面雏形
+============================================================
+
+    #include <windows.h>
+    #include <wchar.h>
+
+    HFONT make_font(int px, int bold)
+    {
+        return CreateFontW(-px, 0, 0, 0, bold ? FW_BOLD : FW_NORMAL,
+                           FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                           OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
+                           CLEARTYPE_QUALITY, DEFAULT_PITCH, L"微软雅黑");
+    }
+
+    LRESULT CALLBACK MyProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+    {
+        switch (msg) {
+
+        case WM_PAINT: {
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(hwnd, &ps);
+
+            SetBkMode(hdc, TRANSPARENT);
+
+            /* ── 标题 ── */
+            HFONT big = make_font(44, 0);
+            HFONT old = (HFONT)SelectObject(hdc, big);
+            SetTextColor(hdc, RGB(255, 224, 130));
+            TextOutW(hdc, 50, 40, L"星空回响", 4);
+            SelectObject(hdc, old);
+            DeleteObject(big);
+
+            /* ── 对话框底板 ── */
+            HBRUSH br = CreateSolidBrush(RGB(12, 18, 40));
+            RECT box = { 40, 220, 560, 350 };
+            FillRect(hdc, &box, br);
+            DeleteObject(br);
+
+            /* ── 名字 ── */
+            HFONT fn = make_font(22, 1);
+            old = (HFONT)SelectObject(hdc, fn);
+            SetTextColor(hdc, RGB(255, 224, 130));
+            TextOutW(hdc, 60, 238, L"她", 1);
+            SelectObject(hdc, old);
+            DeleteObject(fn);
+
+            /* ── 台词 ── */
+            HFONT ft = make_font(26, 0);
+            old = (HFONT)SelectObject(hdc, ft);
+            SetTextColor(hdc, RGB(255, 255, 255));
+            TextOutW(hdc, 60, 275, L"「你袖子上有墨水。」", 10);
+            SelectObject(hdc, old);
+            DeleteObject(ft);
+
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+
+        case WM_DESTROY:
+            PostQuitMessage(0);
+            return 0;
+        }
+        return DefWindowProcA(hwnd, msg, wp, lp);
+    }
+
+    int main(void)
+    {
+        WNDCLASSA wc = { 0 };
+        wc.lpfnWndProc   = MyProc;
+        wc.hInstance     = GetModuleHandleA(NULL);
+        wc.lpszClassName = "MyWin";
+        wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+        RegisterClassA(&wc);
+
+        HWND hwnd = CreateWindowA("MyWin", "星空回响",
+            WS_OVERLAPPEDWINDOW, 100, 100, 600, 400,
+            NULL, NULL, wc.hInstance, NULL);
+        ShowWindow(hwnd, SW_SHOW);
+
+        MSG msg;
+        while (GetMessageA(&msg, NULL, 0, 0)) {
+            TranslateMessage(&msg);
+            DispatchMessageA(&msg);
+        }
+        return 0;
+    }
+
+  ★ 这已经是一个 galgame 界面的雏形：
+      黑底、金色标题、深蓝对话框、名字、台词。
+
+    遮挡、改大小、最小化，全都不会掉。
+
+  【三个"三明治"注意看】
+    标题、名字、台词各一个：
+      old = SelectObject → 画 → SelectObject(old) → DeleteObject
+
+    ★ old 复用了同一个变量，因为每次都立刻换回来了。
+
+
+============================================================
+九点五、★★ 总词表 —— 这份笔记全部的陌生词
+============================================================
+
+  ★ 这一节可以单独打印出来贴着看，看几次就熟了。
+
+  ────────────────────────────────────────────
+  【① 类型】等同于 int，用来声明变量
+  ────────────────────────────────────────────
+
+    词             读法              装的是
+    ──────────────────────────────────────────────────────────
+    HDC            H-D-C             画布号码牌
+    HBRUSH         H-brush           画刷号码牌
+    HFONT          H-font            字体号码牌
+    HPEN           H-pen             画笔号码牌
+    HBITMAP        H-bitmap          图片号码牌
+    HGDIOBJ        H-GDI-obj         【任意】GDI 对象的号码牌（通用型）
+    RECT           rect              ★结构体：左上右下 4 个坐标
+    PAINTSTRUCT    paint-struct      ★结构体：BeginPaint 的容器，不用看里面
+    COLORREF       color-ref         就是 unsigned int，一个颜色
+    LONG / DWORD / UINT / SHORT      全是整数的马甲
+
+  ────────────────────────────────────────────
+  【② 函数】英文单词拼的，拆开就懂
+  ────────────────────────────────────────────
+
+    词                  拆开                    干什么
+    ──────────────────────────────────────────────────────────────
+    BeginPaint          Begin + Paint           开始画：拿画布 + ★清脏标记
+    EndPaint            End + Paint             画完了，还画布
+    GetDC               Get + DC                借画布（非 WM_PAINT 场合）
+    ReleaseDC           Release + DC            还画布
+    TextOutW            Text + Out + W          ★写字（真正画东西的）
+    SetTextColor        Set + TextColor         设文字色（★只设状态）
+    SetBkMode           Set + B(ac)k + Mode     设文字背景模式（★只设状态）
+    CreateSolidBrush    Create+Solid+Brush      造实心画刷
+    FillRect            Fill + Rect             ★填矩形
+    CreateFontW         Create + Font + W       造字体
+    SelectObject        Select + Object         装到画布上，★返回旧的
+    DeleteObject        Delete + Object         删对象（画刷/字体/图通用）
+    GetStockObject      Get + Stock + Object    拿系统库存对象（★不能删）
+
+  ────────────────────────────────────────────
+  【③ 宏 = 数字】全大写下划线
+  ────────────────────────────────────────────
+
+    词                    实际值      意思
+    ──────────────────────────────────────────────
+    TRANSPARENT           1           透明
+    OPAQUE                2           不透明（默认，带底色）
+    FW_NORMAL             400         常规粗细
+    FW_BOLD               700         粗体
+    FALSE                 0           假
+    BLACK_BRUSH           4           系统黑刷子的编号
+    CLEARTYPE_QUALITY     5           抗锯齿
+    DEFAULT_CHARSET 等    各种数       ★照抄
+
+  ────────────────────────────────────────────
+  【④ 宏 = 小函数】
+  ────────────────────────────────────────────
+
+    RGB(r, g, b)      三个 0~255 拼成一个颜色整数
+
+  ────────────────────────────────────────────
+  ★★★ 最后总结三句话
+  ────────────────────────────────────────────
+
+    ① H 开头的都是类型名，装"号码牌"，用起来跟 int 一样
+    ② 全大写带下划线的都是数字，TRANSPARENT 就是 1
+    ③ 函数名都是英文单词拼的，FillRect = 填+矩形
+
+  ★★ 这份笔记里没有一个新的 C 语法，全部是
+      【类型名 变量名 = 函数名(参数);】
+     —— 陌生感 100% 来自词汇，不是来自语法。
+
+
+============================================================
+十、这一节的对照表
+============================================================
+
+    窗口                        控制台（项目里已有的）
+    ────────────────────────────────────────────────────────
+    HDC                         GetStdHandle(STD_OUTPUT_HANDLE)
+    TextOutW(hdc,x,y,s,n)       printemoji(s)（配 gotoxy）
+    SetTextColor(hdc, RGB(..))  setColor(14)
+    坐标 = 像素                 坐标 = 字符格子
+    颜色任意 RGB                只有 16 色
+    FillRect + CreateSolidBrush draw_dialog 画的字符框
+    ★ 必须自己在 WM_PAINT 重画  ★ 系统替你保管，不用管
+
+
+============================================================
+十一、踩过的坑 / 容易错的点
+============================================================
+
+   1. 在 main 里画（GetDC）而不是 WM_PAINT 里画
+      → 遮挡一下就没了
+
+   2. WM_PAINT 里用 GetDC/ReleaseDC 而不是 BeginPaint/EndPaint
+      → 脏标记不清 → WM_PAINT 无限重发 → CPU 满载
+
+   3. case WM_PAINT 后面忘了加花括号
+      → 编译报错（case 后不能直接跟变量声明）
+
+   4. RECT 当成"左上宽高"填
+      → 方块位置尺寸全错。它是【左上右下】四个坐标
+
+   5. 忘了 SetBkMode(hdc, TRANSPARENT)
+      → 字后面一块难看的底色，压在 CG 上尤其明显
+
+   6. CreateSolidBrush / CreateFontW 造了不删
+      → GDI 泄漏。而 WM_PAINT 会被反复调用，漏得很快
+
+   7. ★★ 对象还插在 DC 上就 DeleteObject
+      → 静默失败，永久泄漏，不报错不崩溃
+      → 必须先 SelectObject(hdc, old) 换回来
+
+   8. GetStockObject 拿的东西也去 DeleteObject
+      → 删系统公共资源，不该做
+
+   9. CreateFontW 字高填正数
+      → 字比预期小（正数含行间距）
+
+  10. TextOutA 的长度参数按"字数"填
+      → 中文一个字 2 字节，会截断。用 strlen；或者用 W 版 + wcslen
+
+
+============================================================
+十二、下一步 —— 还有两个问题没解决
+============================================================
+
+  【问题一】怎么显示图片？
+
+    有 24 张 CG，TextOut 显然不行。
+    → 要用 LoadImage 读 BMP + BitBlt / StretchBlt 贴上去
+    ★ 注意 LoadImage 只认 BMP，PNG 读不了，要先转格式
+
+  【问题二】★ 打字机怎么写？—— 这个是真麻烦
+
+    打字机要"每 45 毫秒多显示一个字"。
+    但绘制只能在 WM_PAINT 里做，
+    ★★ 而 WM_PAINT 是 Windows【想发才发】的
+        —— 不能要求它每 45 毫秒发一次。
+
+    而且现在消息循环用的是 GetMessageA，
+    ★ 没消息就睡死在那儿，压根没机会做动画。
+
+  【破法】
+
+    PeekMessage（笔记 33 第 10 节的伏笔）+ 双缓冲
+
+    双缓冲 = 自己造一块"内存里的画布"，
+             所有东西先画在上面，画完一次性拷到屏幕。
+
+    ★ 它同时解决三件事：
+        ① 打字机不闪
+        ② WM_PAINT 有得可画（上一帧躺在内存画布里，一句拷贝就恢复）
+        ③ 相当于自己造了一张"控制台那样的格子表"
+
+  → 见笔记 35（BMP 图片 + 双缓冲 + 打字机 + 焦点交还控制台）
+
+============================================================

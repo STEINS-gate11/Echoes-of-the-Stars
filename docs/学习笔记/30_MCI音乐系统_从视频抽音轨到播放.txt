@@ -1,0 +1,555 @@
+============================================================
+学习笔记 30 · 音乐系统 · PlaySound + ffmpeg 抽音轨
+============================================================
+
+【日期】2026-08-01 写，2026-08-02 大幅修正
+【关键词】PlaySoundA · SND_LOOP · winmm.lib · ffmpeg · now_bgm 防重启
+
+★★★ 重要更正 ★★★
+  这份笔记第一版写的是 MCI 方案，核心结论是错的：
+  我写了"wav 的 play ... repeat 100% 可靠，mp3 才不可靠"，
+  实际完全说反 —— MCI 的 repeat 参数对 wav 根本无效。
+  详见 bug 22。
+  最终采用的是 PlaySound 方案，本笔记已按实际代码重写。
+
+============================================================
+一、电脑是怎么发出声音的
+============================================================
+
+  三个层次：
+
+  【声卡】只认一件事：一串数字。
+    比如 [0, 152, 301, 428, ...]
+    每个数字代表某个瞬间喇叭膜片应该在什么位置。
+    一秒给它 44100 个数字，喇叭振动 44100 次，你就听到声音。
+    这串数字叫 PCM 数据。
+
+  【wav 文件】就是 PCM 数据 + 一个小文件头。
+    文件头写着"双声道、44100 采样率、16 位"，后面全是那串数字。
+    所以 wav 几乎不用解码，读出来直接扔给声卡。
+
+  【mp3】是压缩过的，得先解码成 PCM 才能播。
+    解码靠系统装的解码器，不同机器可能不一样。
+
+  你的程序不可能直接跟声卡说话 —— 那是驱动的活。
+  Windows 给了几层可选的接口。
+
+============================================================
+二、四个候选方案 · 为什么最后选 PlaySound
+============================================================
+
+  ┌──────────────────┬──────────────────────────────────┐
+  │ 方式              │ 评价                             │
+  ├──────────────────┼──────────────────────────────────┤
+  │ PlaySound()      │ 只能 wav，只能同时放一个         │
+  │                  │ 但循环原生支持，三行搞定 ★采用   │
+  │ MCI              │ 命令字符串接口，能放 mp3         │
+  │ (mciSendString)  │ 但 wav 不支持 repeat，循环要自己写│
+  │ DirectSound      │ 能力强，代码量 10 倍             │
+  │ SDL_mixer / FMOD │ 要装第三方库，交作业麻烦         │
+  └──────────────────┴──────────────────────────────────┘
+
+  这个项目的需求：
+    - 背景音乐，同时只放一首  → PlaySound 的"只能一个"不是缺点
+    - 每首都要无限循环        → PlaySound 的 SND_LOOP 原生支持
+    - 不需要音量控制、不需要淡入淡出
+
+  所以 PlaySound 是最合适的。代码最短，功能刚好够。
+
+  ★ 如果以后要放 mp3，或者要 BGM + 音效同时响，
+    就必须换 MCI 或 DirectSound。
+
+  两者都在 winmm.lib 里，#pragma 一样。
+
+============================================================
+三、最终代码
+============================================================
+
+  顶部（#include 之前或之后都行）：
+
+    #pragma comment(lib, "winmm.lib")
+
+  音乐函数（放在 hideCursor 后面）：
+
+    char now_bgm[100] = "";
+
+    void stop_bgm() {
+        PlaySoundA(NULL, NULL, 0);
+        memset(now_bgm, 0, sizeof(now_bgm));
+    }
+
+    void play_bgm(const char *file) {
+        if (strcmp(now_bgm, file) == 0) {
+            return;
+        }
+        if (PlaySoundA(file, NULL, SND_FILENAME | SND_ASYNC | SND_LOOP) == FALSE) {
+            memset(now_bgm, 0, sizeof(now_bgm));
+            return;
+        }
+        strcpy(now_bgm, file);
+    }
+
+    const char* bgm_chapter[7] = {
+        "bgm/hall.wav",              // [0] 回廊之厅
+        "bgm/ch0.wav",               // [1] prologue.txt    · 序幕 深夜
+        "bgm/ch1.wav",               // [2] library.txt     · 第一章 初遇
+        "bgm/ch2.wav",               // [3] rooftop.txt     · 第二章 相伴
+        "bgm/ch3.wav",               // [4] hospital.txt    · 第三章 裂缝
+        "bgm/ch4.wav",               // [5] planetarium.txt · 第四章 缺席
+        "bgm/ch5_planetarium.wav"    // [6] finale.txt      · 第五章 回响
+    };
+
+============================================================
+四、PlaySound 的三个标志
+============================================================
+
+  PlaySoundA(file, NULL, SND_FILENAME | SND_ASYNC | SND_LOOP)
+
+  ┌────────────────┬──────────────────────────────────────┐
+  │ SND_FILENAME   │ 第一个参数是文件路径，不是资源名     │
+  │ SND_ASYNC      │ 异步 —— 立刻返回，不等播完           │
+  │                │ ★ 没这个会卡死在这一行               │
+  │ SND_LOOP       │ 循环。必须和 SND_ASYNC 一起用        │
+  └────────────────┴──────────────────────────────────────┘
+
+  三个用 | 连起来 —— 这是位标志（bit flag）的用法，
+  每个常量占一个二进制位，或运算把它们合在一起。
+
+  停止播放：
+    PlaySoundA(NULL, NULL, 0);
+  传 NULL 文件名表示"停掉当前正在放的"。
+
+  返回值：
+    TRUE (1)  成功
+    FALSE (0) 失败（文件不存在、格式不对、路径错）
+
+  ★ PlaySound 只能放一个。
+    放新的会自动停掉旧的，所以不需要先手动 stop。
+
+  ★ PlaySound 只支持 wav。
+    mp3、ogg、flac 全都不行。
+
+============================================================
+五、now_bgm 防重启 —— 最关键的三行
+============================================================
+
+    if (strcmp(now_bgm, file) == 0) {
+        return;
+    }
+
+  strcmp 比较两个字符串：相同返回 0，不同返回非 0。
+  所以这句是：要放的和正在放的是同一首 → 什么都不做。
+
+  【为什么必须有】
+
+  main 是这样的：
+
+    while (1) {
+        draw_memory_secene();
+        while (!_kbhit()) { ... }
+        char c = _getch();
+        // 各种分支
+    }
+
+  玩家每按一个键，这个 while(1) 转一圈。
+  转一圈可能就调一次 play_bgm。
+
+  没有这三行：
+    按 W → PlaySound(hall.wav) → 从 0 秒开始
+    按 A → PlaySound(hall.wav) → 又从 0 秒
+    按 S → PlaySound(hall.wav) → 又从 0 秒
+    → 音乐永远播不过第一秒，听起来是咔咔咔的杂音
+
+  有了这三行：
+    第 1 次 → now_bgm 是 ""，不同 → 真的播放，记下名字
+    之后    → now_bgm 相等 → return，音乐继续放
+    换章节  → 参数变了，不相等 → 真的换歌
+
+  ★ 这不是优化，少了它整个系统就是坏的。
+
+  【顺序不能反】
+
+    PlaySoundA(...)       先播
+    strcpy(now_bgm, file) 成功了才记
+
+  如果反过来先记再播，万一播放失败，
+  now_bgm 里存的是没在放的歌，之后永远换不回来。
+
+  【stop_bgm 里必须清空 now_bgm】
+
+  如果只 PlaySoundA(NULL,...) 不清 now_bgm：
+    stop_bgm() 停了，但 now_bgm 还是 "bgm/hall.wav"
+    play_bgm("bgm/hall.wav") → strcmp 相等 → return
+    → 以为在放，实际早停了 → 没声音
+
+============================================================
+六、失败静默返回
+============================================================
+
+    if (PlaySoundA(...) == FALSE) {
+        memset(now_bgm, 0, sizeof(now_bgm));
+        return;
+    }
+
+  为什么不打印错误：
+    要"缺一首歌不影响玩游戏"。
+    如果这里 printf，那行字会打在游戏画面上，破坏排版。
+
+  好处是可以先写代码、后补音乐 ——
+  文件没准备好时游戏照样编译照样跑，只是那段没声。
+
+  memset 清空是为了让下一次调用能重试。
+
+============================================================
+七、#pragma comment(lib, ...) 是什么
+============================================================
+
+  编译分两步：
+
+  【编译】源.cpp → 源.obj
+    只检查语法。看到 PlaySoundA(...)，
+    编译器查头文件发现"有这个函数，参数对得上"就放行。
+    不需要知道函数的代码在哪。
+
+  【链接】源.obj + 各种库 → Project2.exe
+    这一步要真的找到 PlaySoundA 的机器码。
+    它在 winmm.dll 里，链接器需要 winmm.lib 这个索引文件。
+
+  不加这行的话，编译能过，链接会报：
+    error LNK2019: 无法解析的外部符号 PlaySoundA
+
+  两种加法：
+    ① 项目属性 → 链接器 → 输入 → 附加依赖项 → winmm.lib
+    ② #pragma comment(lib, "winmm.lib")   ← 用这个
+
+  为什么用 ②：
+    项目属性存在 .vcxproj 里，换电脑、重建项目就丢了。
+    #pragma 写在源码里，跟着代码走。
+    交作业时老师直接编译就能过。
+
+  #pragma 是编译器扩展，只有 MSVC 认。
+  但你只在 Windows 上跑，没问题。
+
+============================================================
+八、bgm_chapter[7] 为什么开 7 个
+============================================================
+
+  因为 cur_chapter 是这么用的：
+    0 = 大厅
+    1~6 = 六章
+
+  开 7 个，[0] 给大厅，cur_chapter 可以直接当下标：
+
+    play_bgm(bgm_chapter[chapter]);   // chapter 是 1~6，直接用
+    play_bgm(bgm_chapter[0]);         // 大厅
+
+  如果只开 6 个，就得写 bgm_chapter[chapter - 1]，
+  而且大厅的音乐还得另外单独写一行。
+  多一个 -1 就多一个出错的机会。
+
+  ★ 项目里所有这类数组都是 7 个，下标含义一致：
+    pangbai_alredy[7]
+    game_begin_locked[7]
+    the_chapter_Walls[7]
+    chaptercolors[7][12]
+    chapter_zhuanhuan[7]
+    bgm_chapter[7]
+
+  【文件名为什么和下标错一位】
+
+    你的文件      游戏显示        场景文件          cur_chapter
+    ─────────    ──────────      ─────────────    ───────────
+    ch0          序幕 深夜        prologue.txt          1
+    ch1          第一章 初遇      library.txt           2
+    ch2          第二章 相伴      rooftop.txt           3
+    ch3          第三章 裂缝      hospital.txt          4
+    ch4          第四章 缺席      planetarium.txt       5
+    ch5          第五章 回响      finale.txt            6
+
+  你的编号和游戏显示是一致的（都从 0 / 序幕 开始），
+  只有代码内部的 cur_chapter 多 1。
+
+  ★ 数组存在的价值就是"只错一次"。
+    错位关系写在数组里，调用处永远写 bgm_chapter[chapter]。
+    如果不用数组，六个 if-else 要正确处理这个错位六次，
+    而且那段代码在 get_to_the_secene 里出现两次 = 十二次机会出错。
+
+============================================================
+九、路径为什么写 "bgm/xxx.wav"
+============================================================
+
+  这是相对路径。bgm/ 表示"当前工作目录下的 bgm 文件夹"。
+
+  三种写法：
+    "bgm/hall.wav"                    相对路径 + 文件夹  ← 用这个
+    "hall.wav"                        相对路径，wav 和 exe 同层
+    "E:/.../bgm/hall.wav"             绝对路径，换电脑就失效
+
+  ★ 用文件夹不是技术要求，纯粹是为了组织文件。
+    14 个 wav 有 438 MB，和 7 个 txt 混在一层会很乱。
+
+  【斜杠方向】
+    Windows 习惯用 \，但代码里写 \ 要转义："bgm\\hall.wav"
+    / 不用转义："bgm/hall.wav"
+    Windows API 两种都认（PlaySound、fopen、CreateFile 全都认）
+    所以一律用 /
+
+  【工作目录不是 exe 所在目录】
+    VS 里按 F5 调试 → 工作目录是项目目录
+    双击 exe       → 工作目录是 exe 所在目录
+
+    实测这个项目在 VS 调试时工作目录是：
+      E:\xingzhihueixiangDaima\Project2\Debug
+
+    所以 bgm/ 要复制到多个可能的位置：
+      Project2\Project2\bgm\
+      Project2\Debug\bgm\
+      Project2\x64\Debug\bgm\
+      Project2\Project2\Debug\bgm\
+      Project2\Project2\x64\Debug\bgm\
+
+    这也是项目里那 7 个 txt 在好几个目录都有一份的原因。
+
+============================================================
+十、用 ffmpeg 从视频抽音轨
+============================================================
+
+  单个文件：
+    ffmpeg -i "视频.mp4" -vn -ar 44100 -ac 2 -c:a pcm_s16le "out.wav"
+
+  参数：
+    -vn              丢掉视频流，只留音频
+    -ar 44100        采样率 44.1kHz（CD 标准）
+    -ac 2            双声道
+    -c:a pcm_s16le   16 位无压缩 PCM ← PlaySound 只吃这种
+
+  查时长：
+    ffprobe -v error -show_entries format=duration -of csv=p=0 "视频.mp4"
+
+  查格式（确认转对了）：
+    ffprobe -v error -show_entries stream=codec_name,sample_rate,channels,bits_per_sample -of default=nw=1 "out.wav"
+    应该输出：
+      codec_name=pcm_s16le
+      sample_rate=44100
+      channels=2
+      bits_per_sample=16
+
+  截取前 3 分钟：
+    ffmpeg -i "视频.mp4" -vn -t 180 ... "out.wav"
+
+  从第 30 秒开始截 3 分钟：
+    ffmpeg -i "视频.mp4" -vn -ss 30 -t 180 ... "out.wav"
+
+  加淡出（避免循环接缝有"咔"声）：
+    ffmpeg -i "视频.mp4" -vn -t 180 -af "afade=t=out:st=177:d=3" ... "out.wav"
+    st=177:d=3 = 从第 177 秒开始，3 秒淡出到无声
+
+  批量转（文件名已改好）：
+    for f in *.mp4; do
+      n=$(basename "$f" .mp4)
+      ffmpeg -y -i "$f" -vn -ar 44100 -ac 2 -c:a pcm_s16le "$n.wav"
+    done
+
+  ★ wav 体积约 10 MB/分钟（无压缩）。
+    14 首共 438 MB。对课程作业无所谓。
+
+============================================================
+十一、九个播放点
+============================================================
+
+  【1】main 里，begin_title() 之前
+
+    play_bgm("bgm/title.wav");
+    begin_title();
+
+    ★ 顺序不能反！
+      begin_title() 里面是 while(1)，只有按空格才 return。
+      写在后面的话，标题界面全程没音乐。
+      这是第一版犯的错，见 bug 23。
+
+    show_the_big_zhi() 不加 —— 大字过场接着放标题曲，情绪是连的。
+
+  【2】get_to_the_hall() —— 序幕独白 + 大厅两首
+
+    system("cls");
+    if (pangbai_alredy[0] == 0) {
+        play_bgm("bgm/titile-hall.wav");
+    }
+    play_the_pangbai(0);
+    play_bgm(bgm_chapter[0]);
+
+    ★ 那个 if 守卫是必须的。
+      play_the_pangbai(0) 内部有 if (pangbai_alredy[0] == 1) return;
+      只播一次。
+
+      第二次回大厅时如果没守卫：
+        序幕曲起 → 独白函数立刻返回 → 大厅曲马上盖掉
+        → 序幕曲只响了千分之几秒，听起来是"咔"一声杂音
+
+    play_bgm(bgm_chapter[0]) 在守卫外面，每次都执行
+    → 满足"每次返回或进入 hall 都播放"
+
+  【3】get_to_the_secene() —— 两个分支都要写
+
+    if (pangbai_alredy[chapter] == 0) {
+        play_pangpai(chapter);              // 章节卡
+        play_bgm(bgm_chapter[chapter]);     // 卡片放完才起音乐
+        play_the_pangbai(chapter);          // 散文
+    }
+    else {
+        play_bgm(bgm_chapter[chapter]);     // 重玩时这里补
+    }
+
+    首次进：音乐在 play_pangpai 之后起
+            （章节卡是一道幕布，音乐在幕布升起时才进来）
+    重玩：  if 整块被跳过，else 里必须补
+            否则会一直放着大厅的曲子 ← 最容易漏的一处
+
+  【4】fenqi_AB() 开头 —— stop_bgm() 静音
+    那 11 秒的星带、织女星呼吸、碎片计数、结局名，全静。
+    玩家刚在大厅听了六次同一首曲子，突然全静
+    → 那个"咦？"的瞬间比任何音乐都有力，而且省一首歌
+
+  【5】play_jieju_A() 开头 —— ending_a1.wav（书房+街道+楼梯）
+  【6】draw_the_Ade_tiantai() 之后 —— ending_a2.wav（天台）
+       ★ 切点选在这里，因为这是 A 结局唯一的真实场景断点
+  【7】play_A_houji() 开头 —— ending_a3_houji.wav（后记）
+  【8】play_jieju_B() 开头 —— ending_b.wav
+  【9】play_jieju_C() 开头 —— ending_c.wav
+       main 的 ending_c 分支加 stop_bgm()，让"星尘归海"字幕也是静的
+  【10】main 末尾 —— stop_bgm()
+
+============================================================
+十二、音乐切点的设计原则
+============================================================
+
+  1. 章节卡是安静的
+     play_pangpai（第 X 章 + 名字 + 旁白）不放音乐
+     章节卡是一道幕布，音乐在幕布升起时才进来
+     如果音乐跟卡片同时起，卡片的庄重感会被冲掉
+
+  2. 场景断点才切歌
+     A 结局：书房 → 街道 → 楼梯 是"走过去"（同一首）
+             天台是"到了"（换一首）
+     切在真实的场景断点，不切在段落数上
+
+  3. 大厅重复是有意义的
+     玩家七次进出同一首曲子 → 回廊变成"家"
+
+  4. 静音也是一种音乐
+     终章过场全静，对比最大，而且不用多找一首歌
+
+============================================================
+十三、Sleep 不影响音乐
+============================================================
+
+  代码里到处是 Sleep(200)、Sleep(3000)、while (_getch() != ' ')。
+
+  ★ 音乐完全不受影响。
+
+  PlaySound 用 SND_ASYNC 之后，播放是在系统的音频线程里跑的。
+  你的主线程睡多久、阻塞多久，都不影响它。
+
+  SND_LOOP 的循环逻辑也在系统那边，
+  所以"放完自动从头再放"不需要你的代码参与。
+
+  ★ 如果不加 SND_ASYNC，PlaySound 会阻塞到播完才返回 ——
+    那样整个游戏会卡死在那一行。
+
+============================================================
+十四、调试方法
+============================================================
+
+  【分步加，不要一次全加】
+
+  第一步只加三样：
+    #pragma comment(lib, "winmm.lib")
+    play_bgm / stop_bgm 两个函数
+    main 里一处调用
+
+  编译运行。有声就说明链接对了、路径对了、格式对了。
+  剩下八处放心加。
+
+  一次加九处，没声的话你不知道是哪处的问题。
+
+  【没声怎么查】
+
+  ① 编译报 LNK2019 → #pragma 没加或拼错
+
+  ② 编译报"无法从 const char[N] 转换为 LPCWSTR"
+     → PlaySound 没带 A 后缀
+
+  ③ 查工作目录和文件是否找得到：
+
+       char buf[300];
+       GetCurrentDirectoryA(300, buf);
+       printf("工作目录 = %s\n", buf);
+
+       FILE* f = fopen("bgm/title.wav", "rb");
+       printf(f ? "文件找得到\n" : "路径不对\n");
+       if (f) fclose(f);
+
+  ④ 查 PlaySound 返回值：
+
+       BOOL ok = PlaySoundA("bgm/title.wav", NULL,
+                            SND_FILENAME | SND_ASYNC | SND_LOOP);
+       printf("PlaySound 返回 %d (1=成功 0=失败)\n", ok);
+
+  ⑤ 返回 1 但没声音 → 音量问题
+     右键任务栏音量图标 → 音量合成器
+     看有没有你的 exe，是不是被单独静音了
+
+  ⑥ 系统默认输出设备是不是选到了没插线的设备（HDMI、蓝牙）
+
+  【本项目实际排查记录】
+
+    工作目录 = E:\xingzhihueixiangDaima\Project2\Debug
+    [1] fopen 成功 —— 文件找得到
+    [2] PlaySound 返回 1
+
+    → 有声音，成功。
+
+    在此之前用 MCI 方案时的输出：
+    [2] open  返回 0   : 指定的命令已被执行
+    [3] play  返回 259 : 驱动程序无法识别指定的命令参数
+    [4] 状态 = stopped
+    [5] 长度 = 230528 毫秒
+
+    open 成功、length 读到了（说明文件完全正常），
+    但 play ... repeat 返回 259 → repeat 参数不被 waveaudio 支持。
+    这是换成 PlaySound 的直接原因。详见 bug 22。
+
+============================================================
+十五、如果以后要放 mp3
+============================================================
+
+  PlaySound 只支持 wav。要放 mp3 必须回到 MCI。
+
+  MCI 能放 mp3，但 repeat 对 mp3 也不可靠（走解码器）。
+  所以循环要自己实现：
+
+    在主循环里轮询状态，发现停了就重播
+
+      char st[64] = "";
+      mciSendStringA("status bgm mode", st, sizeof(st), NULL);
+      if (strcmp(st, "stopped") == 0) {
+          mciSendStringA("seek bgm to start", NULL, 0, NULL);
+          mciSendStringA("play bgm", NULL, 0, NULL);
+      }
+
+  ★ 但这个项目做不到 ——
+    结局里的等待是 while (_getch() != ' ')，
+    _getch() 阻塞，循环体在按键前根本不执行，
+    没地方轮询。
+    得把所有等待循环改成 _kbhit() 轮询，十几处改动。
+
+  所以：这个项目用 wav + PlaySound 是正确选择。
+
+============================================================
+【相关】
+============================================================
+  bug 22 —— MCI 的 repeat 对 wav 无效（换 PlaySound 的原因）
+  bug 23 —— play_bgm 写在 begin_title 之后，标题界面没音乐
+  bug 21 —— 字符串字面量必须用 const 接
+  笔记 20 —— 阻塞按键 _kbhit / 非阻塞 _getch
+============================================================

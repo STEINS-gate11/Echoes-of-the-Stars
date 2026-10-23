@@ -1,0 +1,227 @@
+============================================================
+Bug 22 · MCI 的 repeat 参数对 wav 无效 · 返回 259
+============================================================
+
+【时间】2026-08-02
+【严重程度】高 · 音乐完全不响，但代码看起来完全正确
+【位置】play_bgm 里的 mciSendStringA("play bgm repeat", ...)
+
+============================================================
+【现象】
+============================================================
+
+  音乐系统代码写完，检查过所有能想到的地方：
+
+    ✓ #pragma comment(lib, "winmm.lib") 在行 2
+    ✓ mciSendStringA 全部带 A 后缀
+    ✓ now_bgm 防重启锁正确
+    ✓ 九处调用点全部正确
+    ✓ wav 格式 pcm_s16le / 44100 / 2ch / 16bit
+    ✓ bgm 文件夹复制到 5 个可能的工作目录
+
+  运行 —— 一点声音都没有。
+
+============================================================
+【定位过程】
+============================================================
+
+  在 main 开头插了一段诊断代码，把每一步的返回值打出来：
+
+    char buf[300];
+    GetCurrentDirectoryA(300, buf);
+    printf("工作目录 = %s\n", buf);
+
+    FILE* f = fopen("bgm/title.wav", "rb");
+    printf(f ? "fopen 成功\n" : "fopen 失败\n");
+    if (f) fclose(f);
+
+    MCIERROR e1 = mciSendStringA("open \"bgm/title.wav\" alias dbgt", NULL, 0, NULL);
+    char m1[300] = "";
+    mciGetErrorStringA(e1, m1, 300);
+    printf("open  返回 %lu : %s\n", e1, m1);
+
+    if (e1 == 0) {
+        MCIERROR e2 = mciSendStringA("play dbgt repeat", NULL, 0, NULL);
+        char m2[300] = "";
+        mciGetErrorStringA(e2, m2, 300);
+        printf("play  返回 %lu : %s\n", e2, m2);
+
+        char st[64] = "";
+        mciSendStringA("status dbgt mode", st, sizeof(st), NULL);
+        printf("状态 = %s\n", st);
+
+        char len[64] = "";
+        mciSendStringA("status dbgt length", len, sizeof(len), NULL);
+        printf("长度 = %s 毫秒\n", len);
+    }
+
+  输出：
+
+    工作目录 = E:\xingzhihueixiangDaima\Project2\Debug
+    [1] fopen 成功 —— 路径对，文件找得到
+    [2] open  返回 0   : 指定的命令已被执行。
+    [3] play  返回 259 : 驱动程序无法识别指定的命令参数。
+    [4] 状态 = stopped
+    [5] 长度 = 230528 毫秒
+    [6] 音量 =
+
+  这六行把问题说得清清楚楚：
+
+    [1] 路径没问题
+    [2] open 成功
+    [5] length 读到 230528 毫秒 → 文件被正确解析，格式没问题
+    [3] play 返回 259 → 就是这一步失败的
+    [4] 状态 stopped → 确认没在播
+
+  ★ mciGetErrorStringA 是关键工具。
+    259 这个数字本身看不出什么，
+    翻译成"驱动程序无法识别指定的命令参数"
+    就直接指向了 repeat 这个参数。
+
+============================================================
+【根本原因】
+============================================================
+
+  MCI 的 repeat 参数只对 MIDI 序列器（sequencer 设备）有效。
+
+  wav 用的是 waveaudio 设备，它不认 repeat。
+
+  所以 "play bgm repeat" 这条命令整体被拒绝 ——
+  不是"忽略 repeat 但照样播放"，是整条命令失败，一声都没有。
+
+  MCI 各设备类型支持的 play 参数不一样：
+
+    waveaudio  支持 from / to / wait / notify
+               不支持 repeat
+    sequencer  支持 from / to / wait / notify / repeat
+    cdaudio    支持 from / to / wait / notify
+
+  ★ 我之前在笔记 30 里写"wav 的 repeat 100% 可靠，
+    mp3 才不可靠" —— 完全说反了。
+    实际是 wav 根本不支持 repeat。
+
+  而且我还基于这个错误理由，让用户把 15 个视频全转成了 wav。
+  （转 wav 本身是对的 —— PlaySound 只吃 wav —— 但理由错了。）
+
+============================================================
+【修复 · 换成 PlaySound】
+============================================================
+
+  PlaySound 是专门放 wav 的 API，SND_LOOP 原生支持循环。
+  同样在 winmm.lib 里，#pragma 不用改。
+
+  改前（MCI）：
+
+    void stop_bgm() {
+        mciSendStringA("close all", NULL, 0, NULL);
+        memset(now_bgm, 0, sizeof(now_bgm));
+    }
+    void play_bgm(const char *file) {
+        if (strcmp(now_bgm, file) == 0) return;
+        mciSendStringA("close all", NULL, 0, NULL);
+        char temp[100];
+        sprintf(temp, "open \"%s\" alias bgm", file);
+        if (mciSendStringA(temp, NULL, 0, NULL) != 0) {
+            memset(now_bgm, 0, sizeof(now_bgm));
+            return;
+        }
+        mciSendStringA("play bgm repeat", NULL, 0, NULL);
+        strcpy(now_bgm, file);
+    }
+
+  改后（PlaySound）：
+
+    void stop_bgm() {
+        PlaySoundA(NULL, NULL, 0);
+        memset(now_bgm, 0, sizeof(now_bgm));
+    }
+    void play_bgm(const char *file) {
+        if (strcmp(now_bgm, file) == 0) return;
+        if (PlaySoundA(file, NULL, SND_FILENAME | SND_ASYNC | SND_LOOP) == FALSE) {
+            memset(now_bgm, 0, sizeof(now_bgm));
+            return;
+        }
+        strcpy(now_bgm, file);
+    }
+
+  代码从 13 行缩到 8 行，而且真的能响。
+
+  三个标志：
+    SND_FILENAME  第一个参数是文件路径
+    SND_ASYNC     异步，立刻返回不等播完（★没这个会卡死）
+    SND_LOOP      循环，必须和 SND_ASYNC 一起用
+
+  停止：PlaySoundA(NULL, NULL, 0)
+
+  PlaySound 只能同时放一个 —— 放新的自动停旧的，
+  所以不需要 MCI 那个 close all 步骤。
+
+  验证输出：
+    [1] fopen 成功 —— 文件找得到
+    [2] PlaySound 返回 1  (1=成功 0=失败)
+    → 有声音
+
+============================================================
+【教训】
+============================================================
+
+  1. API 参数的适用范围要查清楚
+     "repeat 是 play 命令的官方参数"这句话是对的，
+     但它只对特定设备类型有效。
+     我看了命令表，没看设备类型的支持矩阵。
+
+  2. 返回值一定要检查，而且要翻译成人话
+     mciSendStringA 返回 259 —— 光看数字什么都不知道
+     mciGetErrorStringA(259, ...) → "驱动程序无法识别指定的命令参数"
+     → 一句话锁定问题
+
+     ★ 这个项目原来的 play_bgm 里就有检查返回值，
+       但只检查了 open，没检查 play。
+       如果两个都检查，第一次运行就能发现。
+
+  3. 分步诊断比通读代码有效
+     代码看起来完全正确 —— 因为它真的没有语法或逻辑错误。
+     错的是我对 API 行为的假设。
+     假设是查不出来的，只能靠打印实际返回值。
+
+  4. length 能读到说明文件没问题
+     这一行排除了"wav 格式不对""路径错""文件损坏"三种可能，
+     把范围缩小到 play 这一步。
+     ★ 诊断时多打几个 status，缩小范围最快。
+
+  5. 选 API 要看需求，不是看功能多
+     MCI 功能比 PlaySound 多得多（能放 mp3、能查进度、能调音量），
+     但这个项目只需要"放一首、循环、能换" ——
+     PlaySound 刚好够，而且代码短一半。
+
+     功能多的 API 不等于更合适的 API。
+
+  6. 写笔记时不确定的结论要标出来
+     我在笔记 30 里把一个没验证过的假设写成了"100% 可靠"。
+     那份笔记已经修正，并在开头加了更正声明。
+
+============================================================
+【PlaySound 的限制（要知道）】
+============================================================
+
+  1. 只支持 wav
+     mp3、ogg、flac 全都不行
+
+  2. 只能同时放一个
+     不能 BGM + 音效同时响
+     （这个项目不需要，所以不是问题）
+
+  3. 没有音量控制、没有淡入淡出、读不到播放进度
+
+  如果以后要这些功能，得换 MCI 或 DirectSound。
+  MCI 放 mp3 的话循环要自己轮询实现，
+  但这个项目的等待循环是 while (_getch() != ' ')，
+  _getch() 阻塞，没地方轮询 —— 要改十几处。
+
+============================================================
+【相关】
+============================================================
+  笔记 30 —— 音乐系统（已按 PlaySound 方案重写）
+  bug 23  —— play_bgm 写在 begin_title 之后
+  笔记 20 —— 阻塞按键 _kbhit / 非阻塞 _getch
+============================================================

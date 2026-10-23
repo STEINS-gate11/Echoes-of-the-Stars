@@ -1,0 +1,307 @@
+============================================================
+Day · 2026-07-31 · 三结局完成 + Hall 终章机制设计
+============================================================
+
+============================================================
+一、今天做了什么
+============================================================
+
+  1. A 结局 play_jieju_A 全文写完(130 段独白)
+     - 书房 36 段
+     - 街道转场 + 走路动画
+     - 楼梯转场 + 走路动画
+     - 天台 90 段(含完整的信)
+     - 收尾流星 draw_A_liuxing
+
+  2. B 结局 play_jieju_B 全文写完(40 段独白)
+     - 全程书房不动
+     - 结尾"你还是得过下去"
+
+  3. C 结局 play_jieju_C 全文写完(60 段独白)
+     - play_C_item 物品消散动画
+     - 镜子里认不出自己
+     - 结尾"'愿望'这个词,是什么意思"
+
+  4. 记忆值冻结机制 in_ending
+     - 1 个全局开关 + 4 处检查
+     - 进结局后记忆值恒定不再扣
+
+  5. Hall 终章 A/B 触发机制设计完成(代码还没写进源.cpp)
+
+  6. 完整检查源代码,找出 4 个 bug
+
+============================================================
+二、今天写的学习笔记
+============================================================
+
+  27_三结局打字机_两套函数分工.txt
+    - play_jiejju_conver(B/C 用)vs play_A_tiantai_dubai(A 用)
+    - 两套函数差别只有 while 里那两行
+    - delay2 从 100 到 500 是一条情绪曲线
+    - delay_with_huanhang 自动换行的三个关键点
+    - clear_new_right 只清右半屏(x 52~118)
+
+  28_流星动画三种实现_状态机与阻塞.txt
+    - begin_title:局部变量 + 大循环
+    - draw_tiantai:static 变量 + 每帧调一次(状态机)
+    - draw_A_liuxing:阻塞式一次性播放
+    - static 是状态机的钥匙
+    - 擦除上一帧的 off-by-one 陷阱
+    - 三套流星的参数对比表
+
+  29_A结局场景动态设计_走路与转场.txt
+    - draw_street_dongtai:横向走路,停靠点数组
+    - draw_stair_dongtai:斜向走路,二维坐标数组
+    - while 条件用 || 不用 &&
+    - 两个 if 并列 → 斜走;else if → 阶梯走
+    - show_the_jiejuDEzhimu 转场字幕 + 居中公式 x = 60 - len
+    - draw_the_Ade_tiantai 复用 rooftop.txt 省 50 行代码
+
+============================================================
+三、今天记的 bug
+============================================================
+
+  15_wchar指针比较_wcscmp.txt
+    have_already_pick 用 == 比 wchar_t*
+    → 比的是地址不是内容
+    → 物品可重复拾取
+    修:加 #include <wchar.h> + 改 wcscmp
+
+  16_play_A_tiantai_dubai缺参数.txt
+    最后一段只传 1 个参数,函数要 3 个
+    → 编译不过
+    修:补上 28, 400
+
+  17_宽字符串字面量自动拼接.txt
+    第五章 pangbai 漏逗号
+    → C++ 自动拼接,两句变一句
+    → pangbai2 变 NULL,少显示一行
+    修:加逗号
+
+  另外还有一个漏分号(show_last_world 里 text=lines_C)
+    这个太简单,归到 bug 16 里一起说了
+
+============================================================
+四、Hall 终章触发机制 · 设计方案
+============================================================
+
+  ★ 这是今天设计完但还没写进源.cpp 的部分
+  ★ 明天照这个抄
+
+  【判定条件】
+    章节完成:pangbai_alredy[1..6] 全为 1(看完 6 章开场)
+    A 结局:  total_size >= 18(6 章 × 3 件全拾)
+    B 结局:  total_size < 18
+    C 结局:  memory_zhi == 0(已实现)
+
+  【触发位置】
+    ✦ 在 (24, 13) 和 (25, 13),占 2 格
+    —— 终章 —— 在 (17, 14) 起,占 14 列
+    两处都设为墙,玩家撞不进去,文字不会被 @ 擦掉
+
+  【要改的 8 处】
+
+  ① hall.txt 第 14 行(数组 row 13)
+      改成:=                       FF                      =
+      (= + 23 空格 + FF + 22 空格 + =)
+
+  ② hall.txt 第 15 行(数组 row 14)
+      改成:=                TTTTTTTTTTTTTT                 =
+      (= + 16 空格 + T×14 + 17 空格 + =)
+
+  ③ the_chapter_Walls[0] 从 "=D" 改成 "=DFT"
+      让 F 和 T 变成墙
+
+  ④ load_secene 过滤 F T
+      if (ch == '\0' || ch == ' ' || ch == 'A' || ch == 'B'
+          || ch == 'C' || ch == '?' || ch == 'F' || ch == 'T') {
+          continue;
+      }
+      数据在(墙判定有效),视觉隐藏(不画到屏幕)
+
+      ★ 已查证:7 个场景文件里都没有 F T,安全
+
+  ⑤ 新函数 all_chapter_done()
+      放在 draw_the_beginning_room 之前
+
+      int all_chapter_done() {
+          for (int i = 1; i <= 6; i++) {
+              if (pangbai_alredy[i] == 0) return 0;
+          }
+          return 1;
+      }
+
+      为什么用 pangbai_alredy 不用 game_begin_locked:
+        game_begin_locked 表示"能不能进"
+        pangbai_alredy 表示"看过开场"
+        解锁 ≠ 玩过
+
+  ⑥ draw_the_beginning_room() 末尾加
+
+      if (all_chapter_done()) {
+          setColor(14);
+          gotoxy(24, 13);
+          printemoji(L"✦");
+          setColor(6);
+          gotoxy(17, 14);
+          printemoji(L"—— 终章 ——");
+      }
+
+      没完成就一个字都不画
+      塞在这个函数里 → 自动更新(它在 2 个地方被调)
+
+  ⑦ 新函数 finale_check(px, py)
+
+      int finale_check(int px, int py) {
+          if (!all_chapter_done()) return 0;
+          if (isreact(px, py, 24, 13)) return 1;
+          if (isreact(px, py, 25, 13)) return 1;
+          return 0;
+      }
+
+      isreact 判曼哈顿距离 == 1(上下左右相邻)
+      两格都判,玩家从左右上任一侧都能触发
+
+  ⑧ 新函数 goto_finale_AB()
+      放在 play_jieju_A 之后(C++ 要求先声明后使用)
+
+      void goto_finale_AB() {
+          system("cls");
+          Sleep(500);
+          setColor(7);
+          gotoxy(31, 12);
+          printemoji(L"—— 终章 ——");
+          Sleep(1500);
+          if (total_size >= 18) {
+              setColor(14);
+              gotoxy(28, 14);
+              printemoji(L"—— 星光彼岸 ——");
+              Sleep(2000);
+              play_jieju_A();
+          }
+          else {
+              setColor(8);
+              gotoxy(28, 14);
+              printemoji(L"—— 未完待续 ——");
+              Sleep(2000);
+              play_jieju_B();
+          }
+      }
+
+  ⑨ main 的 c == 'e' hall 分支最前加
+
+      else if (c == 'e') {
+          if (strcmp(cursecene, "hall.txt") == 0) {
+              if (finale_check(px, py)) {
+                  goto_finale_AB();
+                  break;
+              }
+              for (int i = 0; i < 6; i++) {
+                  ...
+              }
+          }
+
+  【玩家路径】
+    起点 (24, 11) → 按 s → (24, 12) → 按 E → 触发
+    按 1 次 s + 1 次 E,极容易找
+
+  【设计要点回顾】
+    - 占位符必须是 ASCII(bg 是 char 数组,中文进不去)
+    - 三层配合:实体字符占位 + 墙防走上去 + printemoji 盖美化
+    - 和 hall.txt 里 D 门的做法完全一致
+    - 复用现有机制,不新增全局变量
+
+============================================================
+五、明天要做的
+============================================================
+
+  【必须先做 · 不然编译不过】
+    1. show_last_world 补分号:text = lines_C;
+    2. play_A_tiantai_dubai 补参数:..., 28, 400);
+
+  【逻辑修复】
+    3. 加 #include <wchar.h>
+    4. have_already_pick 改用 wcscmp
+    5. 第五章 pangbai 加逗号
+
+  【功能补完】
+    6. 按上面第四节的 9 处改动,写 Hall 终章机制
+    7. A 和 B 结局补黑屏 + 字幕(C 已有)
+       在 play_jieju_A / play_jieju_B 开头加:
+         system("cls");
+         Sleep(500);
+         gotoxy(...);
+         printemoji(L"—— 终章 · XXX ——");
+         Sleep(2000);
+       (或者统一放在 goto_finale_AB 里,现在的设计就是这样)
+
+  【测试】
+    8. 编译跑一遍,走完 6 章,看 ✦ 出不出来
+    9. 拾满 18 件走 A,拾不满走 B
+    10. 挂机等记忆值归零走 C
+    11. 检查三个结局的独白有没有残留、溢出
+
+  【可选 · 不着急】
+    12. play_jieju_B 里 4 处一行挤两个调用,拆开
+        (1797、1816、1817 行附近,能跑但难调试)
+
+============================================================
+六、今天的教训
+============================================================
+
+  1. 写代码的最后几行要慢
+     今天两个编译错都在"函数快写完的地方"
+     前面 129 段都对,最后 1 段漏参数
+
+  2. C++ 的"贴心特性"会变成静默 bug
+     相邻字符串自动拼接 → 漏逗号不报错
+     结构体未赋值字段自动 NULL → 少显示一行不崩
+
+  3. == 只比地址
+     wchar_t* / char* / 任何指针
+     比内容必须 wcscmp / strcmp
+     这是基本功,写快了容易忘
+
+  4. 文本和动画要呼应
+     独白说"走得很慢" → Sleep 从 200 改 500
+     不是随便填数,是按剧情填
+
+  5. static 是状态机的钥匙
+     函数被外部循环反复调 → 变量必须 static
+     否则每次都重置,动画永远停在第一帧
+
+  6. 复用比重写好
+     A 结局天台直接读 rooftop.txt
+     只改配色 + 擦物品 + 加人物
+     省 50 行代码
+
+  7. 占位符 + 墙 + printemoji 是个好套路
+     hall.txt 里 D 门用的就是这个
+     终章标记照抄,不用发明新机制
+
+============================================================
+七、当前进度
+============================================================
+
+  源.cpp:2341 行
+
+  已完成:
+    ✓ 主界面 begin_title + show_the_big_zhi
+    ✓ 大厅 hall + 6 章场景
+    ✓ 幕间旁白 play_pangpai + play_the_pangbai
+    ✓ 物品对话 playconversation + 链表历史
+    ✓ 记忆值系统 + 冻结机制
+    ✓ A/B/C 三个结局全文
+    ✓ 献词 show_last_world
+    ✓ 重置 chongzhi_game + return_to_titile
+
+  未完成:
+    ✗ 4 个 bug 修复
+    ✗ Hall 终章 A/B 触发(设计完,代码没写)
+    ✗ 完整测试
+
+  文档:
+    学习笔记 29 篇
+    bug 记录 17 篇
+
+============================================================

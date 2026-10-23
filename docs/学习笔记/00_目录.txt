@@ -1,0 +1,73 @@
+============================================================
+《星空回响》学习笔记 · 目录
+============================================================
+
+【本文件夹说明】
+- 存放你 C++ 学习过程中的所有笔记
+- 按学习顺序编号，方便回头查
+- 每份笔记只讲一个知识点，讲透
+
+【当前笔记清单】
+
+  00_目录.txt                本文件
+  01_环境与工具.txt          Day 1 · Visual Studio 环境 + 项目结构
+  02_控制台与坐标系.txt       Day 1 · 控制台是什么 + 坐标怎么用
+  03_换行符和gotoxy.txt       Day 2 · \n 的规则 + gotoxy 的必要性
+  04_文件读取.txt            Day 2 · fopen / fgets / fclose + 二维数组
+  05_场景字符与碰撞.txt       Day 2 · 哪些字符是墙 + strchr 用法
+  06_打字机基础_fflush与Sleep.txt  英文打字机循环 + fflush + Sleep
+  07_中文打字机_宽字符与WriteConsoleW.txt  中文宽字符输出 + WriteConsoleW
+  08_键盘输入缓冲区与clearInputBuffer.txt  _kbhit / _getch + 清除旧按键
+  09_对话框绘制_上下横线与姓名栏.txt        draw_dialog / cleararray / 布局约定
+  10_为什么用WriteConsoleW而不是printf.txt  从 printf 推导到 WriteConsoleW 的思考顺序
+  11_代理对与printWideAll.txt              为什么 emoji 会被打字机拆开 + 一次性输出
+  12_loadScene_指针输出参数.txt            抽函数 + int* 输出参数 + 数组传参注意事项
+13_显示层与数据层必须同步.txt            "D 消失"bug 调试记录 + 两层同步原理
+14_多层嵌套数组的初始化括号.txt          itemDialogs 的 {{{}}} 到底哪层套哪层
+15_双向链表实现对话历史.txt              DialogNode + pushDialog + isPicked + 回看界面
+16_const关键字与只读字符串.txt           为什么字符串字面量要用 const 指针接
+17_项目整体设计总结.txt                  ★ 项目全景 + 所有函数职责 + 数据流
+18_幕间旁白系统·章节过场.txt             play_pangpai + play_the_pangbai 旁白系统
+19_主界面与大字过场·完整设计总结.txt     begin_title + show_the_big_zhi 主界面
+20_阻塞按键_kbhit_非阻塞按键_getch.txt  阻塞 vs 非阻塞 · while 循环查按键
+21_主界面动画系统·思路总结.txt           织女星呼吸 + 流星 + 静态字符保护
+22_记忆值系统·完整设计思路.txt           memory_zhi + push/pop_stack_time
+23_记忆值冻结机制_in_ending.txt            1 个开关 + 4 处检查 · 进结局冻结
+24_消散动画遍历链表.txt                    play_C_item · 遍历 head→tail · 每屏 3 个
+25_场景绘制的三个 mode.txt                  ending_color 结构体 + 三套色 · draw_ending_room(mode)
+26_字符列宽判断.txt                          < 0x80 vs >= 0x80 · 半角 1 列 · 全角 2 列
+27_三结局打字机_两套函数分工.txt             play_jiejju_conver vs play_A_tiantai_dubai · delay2 情绪曲线
+28_流星动画三种实现_状态机与阻塞.txt         static 状态机 vs 局部变量 vs 阻塞式 · 三套流星对比
+29_A结局场景动态设计_走路与转场.txt          走路动画 + 转场字幕 + 场景复用 · 文本与动画呼应
+30_MCI音乐系统_从视频抽音轨到播放.txt        PlaySoundA + SND_LOOP + ffmpeg 抽音轨 · 9 个播放点（已按实际方案重写）
+31_占位符加墙加printemoji_终章标记三层配合.txt  hall.txt 放 F T + 设为墙 + load_secene 过滤 + printemoji 盖真字符
+32_音乐系统从零重学_十层递进.txt             PCM→wav→PlaySound→位标志→逐行拆码→九个播放点→259 排查全过程
+33_Windows窗口编程入门_从MessageBox到消息循环.txt  ★ 窗口骨架 · 句柄/宏/A与W后缀/函数指针 · 消息驱动 · 消息队列是线程的
+34_往窗口里画东西_HDC与WM_PAINT.txt          ★词汇4分类(H=句柄/大写=数字) · 为什么字会消失 · WM_PAINT · SelectObject 三明治
+
+  Day2_2026-07-09_总结.txt   ★ 今天一整天的总结
+  Day_2026-07-31_三结局完成与Hall终章设计.txt  ★ 三结局全文 + Hall 终章机制设计方案
+  Day_2026-08-01_幕间扩写与音乐系统.txt        ★ 幕间全部扩写 + 音乐系统 + 后记设计过程
+
+
+【使用建议】
+- 遇到不懂的地方 → 翻笔记
+- 学完一个知识点 → 建议自己再重写一份笔记（用你自己的话）
+- 建议每周日晚上翻一遍所有笔记，回顾
+
+
+【后续会补充的笔记】
+
+  05_结构体与数组.txt        W2 · struct 定义 + Item 数组
+  06_WASD移动与碰撞.txt      W2 · 光标移动 + 碰撞检测
+  07_打字机效果.txt         W3 · 逐字输出 + Sleep 控制
+  08_对话框绘制.txt         W3 · 上下横线版式 + 姓名栏
+  09_状态机.txt             W3 · enum + switch 主循环
+  10_栈的实现.txt           W5 · 对话历史栈
+  11_链表的实现.txt         W5 · 物品清单链表
+  12_计时与倒计时.txt        W5 · GetTickCount 记忆值倒计时
+  13_文件存档.txt           W6 · fwrite/fread 保存进度
+  14_BGM播放.txt            W8 · mciSendString 播音乐
+
+
+============================================================

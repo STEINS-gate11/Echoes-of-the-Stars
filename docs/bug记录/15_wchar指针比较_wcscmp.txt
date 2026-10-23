@@ -1,0 +1,132 @@
+============================================================
+Bug 15 · wchar_t* 指针比较(== 比地址不比内容)
+============================================================
+
+【时间】2026-07-31
+【严重程度】高 · 物品可重复拾取 · 跨重启后所有物品都拾不进去
+【位置】源.cpp 1104 行 · have_already_pick 里
+
+============================================================
+【现象】
+============================================================
+
+  int have_already_pick(int chapter, int slot) {
+      const wchar_t* pickedname = item_everyconversition[chapter - 1][slot].name;
+      conver_node* p = head;
+      while (p) {
+          if (p->cur_chapter == chapter && p->name == pickedname) {  // ← bug
+              return 1;
+          }
+          p = p->next;
+      }
+      return 0;
+  }
+
+============================================================
+【根本原因】
+============================================================
+
+  p->name 和 pickedname 都是 const wchar_t*
+  C++ 里 == 比两个指针,比的是地址,不是内容
+
+  - 字符串字面量(L"星星")在编译器会去重
+    多次出现同一个 L"星星",地址可能相同
+  - 但跨函数/跨结构的指针,地址几乎一定不同
+  - 即使内容完全一样("星星" == "星星"),地址不同就返回 0
+
+  实际效果:
+    · 进章节拾取 A 物品 → 插入链表
+    · 重启游戏 → in_ending 状态保留
+    · 再进同章节 → 链表是空的(head == NULL)
+    · 拾取 A → inserted OK
+    · 再 E A → 走到 have_already_pick
+    · 链表里有 A,p->name 指向链表里那个
+    · pickedname 指向 item_everyconversition 里那个
+    · 两个指针地址不同 → 函数返回 0
+    · **物品可以无限重复拾取**
+
+  更隐蔽的:
+    · 清屏和 see_you 释放链表
+    · 跨重启(chongzhi_game 不清链表)时
+    · 链表里残留的旧指针指向已释放内存
+    · 段错误或者继续返回错值
+
+============================================================
+【修复】
+============================================================
+
+  1. 源.cpp 顶部加 #include <wchar.h>
+
+     现在 include:
+       #include <stdio.h>
+       #include <stdlib.h>
+       #include <windows.h>
+       #include <conio.h>
+       #include <string.h>
+       #include <time.h>
+       #include <math.h>
+
+     改成:
+       #include <stdio.h>
+       #include <stdlib.h>
+       #include <windows.h>
+       #include <conio.h>
+       #include <string.h>
+       #include <wchar.h>          // ← 加这个
+       #include <time.h>
+       #include <math.h>
+
+
+  2. 改比较
+
+     错的:
+       if (p->cur_chapter == chapter && p->name == pickedname) {
+
+     对的:
+       if (p->cur_chapter == chapter && wcscmp(p->name, pickedname) == 0) {
+
+     wcscmp 返回 0 表示字符串相等
+     这是 wchar.h 提供的宽字符版 strcmp
+
+============================================================
+【教训】
+============================================================
+
+  1. C/C++ 里:
+     - == 比 char*/wchar_t*/int* 等所有指针,只比地址
+     - 比内容必须用 strcmp/wcscmp
+     - 这是基本功,但写快了容易忘
+
+  2. 包含头文件:
+     - strcmp 在 <string.h>
+     - wcscmp 在 <wchar.h> 或 <string.h>(某些实现)
+     - 保险起见,只要用 wcscmp 就显式 include <wchar.h>
+
+  3. 测过的"巧合":
+     - 如果 pickedname 和 p->name 正好指向同一个 L"..." 字面量
+     - 编译器去重后,地址会相同
+     - 这时 == 也会"碰巧"返回 1
+     - 让你以为代码对的
+     - 但只要分配方式变了(比如临时变量、malloc 拷贝),立刻露馅
+
+  4. 调试建议:
+     - 物品拾取"有时对有时错" → 第一反应查指针比较
+     - 跨重启后状态异常 → 也可能和这个有关
+
+============================================================
+【相关】
+============================================================
+
+  - have_already_pick 在 get_to_the_secene 调(行 1215-1217)
+  - get_to_the_secene 在 main E 流程调(行 2259)
+  - insert_tail 把 item->name 存进链表节点
+  - 链表节点 name 来自 item_everyconversition 里 L"..." 字面量
+  - pickedname 也来自同一个 L"..." 字面量
+  - 同一字面量在编译期去重时,地址才相同
+  - 一旦编译器不去重(比如不同翻译单元),立刻坏
+
+  关联 bug:
+    - 暂无
+    - 但 chongzhi_game 不清链表可能和这个互相放大
+
+============================================================

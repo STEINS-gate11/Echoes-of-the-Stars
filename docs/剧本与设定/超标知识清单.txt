@@ -1,0 +1,376 @@
+============================================================
+《星空回响》超标知识清单（C 基础课之外要学的）
+============================================================
+
+【说明】
+- 这些是 C 大作业教材通常不教、但你这个项目需要用到的东西
+- 按 W1-W8 时间顺序排列，你到那一周再学对应内容
+- 每一项标了：难度（⭐~⭐⭐⭐⭐）、学习时间、必要性、简明搜索关键词
+
+【C 基础课通常教什么（你应该已经会的）】
+- 变量、循环、if/switch、函数、数组、字符串
+- 指针（基础）、结构体、简单文件读写（fopen/fgets）
+- printf/scanf
+- 简单的栈和链表实现
+
+以下都是"超出"这个范围的东西：
+
+
+============================================================
+【W1 第一周 · 必学 · 4 项】
+============================================================
+
+▌ 1. Windows 控制台 API ⭐⭐（必学）
+    什么      : 用 Windows API 精确控制光标位置和文字颜色
+    为什么    : 场景要在指定位置画字符，不能只用 printf 从上往下
+    核心函数  :
+       #include <windows.h>
+       SetConsoleCursorPosition(HANDLE, COORD)  // 光标定位
+       SetConsoleTextAttribute(HANDLE, WORD)    // 颜色
+       GetStdHandle(STD_OUTPUT_HANDLE)          // 获取控制台句柄
+       SetConsoleCursorInfo(...)                // 隐藏光标
+    学习时间  : 半天到 1 天
+    搜索关键词: "C++ 控制台 光标 gotoxy" "SetConsoleTextAttribute 颜色表"
+
+
+▌ 2. conio.h 键盘读取 ⭐（必学）
+    什么      : 不按回车就能读键盘（普通 scanf 必须回车）
+    为什么    : WASD 移动需要按下立即响应
+    核心函数  :
+       #include <conio.h>
+       _getch()          // 阻塞式读一个字符（不显示，不用回车）
+       _kbhit()          // 非阻塞式检查是否有键按下（返回 0/非 0）
+    学习时间  : 半小时
+    搜索关键词: "conio.h getch kbhit 用法"
+
+
+▌ 3. Windows 计时 ⭐（必学）
+    什么      : 毫秒级精确计时和睡眠
+    为什么    : 记忆值每 8 秒 -1、打字机每 40ms 出一个字
+    核心函数  :
+       #include <windows.h>
+       DWORD GetTickCount()   // 获取系统启动以来的毫秒数
+       Sleep(int ms)          // 暂停当前线程（不是标准库 sleep）
+    学习时间  : 15 分钟
+    搜索关键词: "GetTickCount Sleep 用法"
+
+
+▌ 4. UTF-8 编码处理 ⭐⭐（必学，容易踩坑）
+    什么      : 让控制台正确显示中文
+    为什么    : 中文不设置的话会显示成 ??? 或 乱码
+    核心操作  :
+       SetConsoleOutputCP(65001);  // 让输出用 UTF-8
+       // 或在 cmd 里: chcp 65001
+       // 编译时加: -finput-charset=UTF-8 -fexec-charset=UTF-8
+    学习时间  : 1-2 小时（含调试踩坑）
+    搜索关键词: "C++ 控制台 中文 乱码" "SetConsoleOutputCP 65001"
+
+
+============================================================
+【W2 第二周 · 必学 · 2 项】
+============================================================
+
+▌ 5. 二维字符数组 + fgets ⭐⭐（必学）
+    什么      : 用 char bg[20][49] 读取整个 20 行的场景文件
+    为什么    : 场景 .txt 要整个加载到内存，才能做碰撞检测
+    核心代码  :
+       char bg[20][49];
+       FILE *fp = fopen("prologue.txt", "r");
+       for (int y = 0; y < 20; y++) {
+           fgets(bg[y], 49, fp);  // 每次读一行到 bg[y]
+           // 注意: fgets 会读入行尾 '\n', 要手动去掉
+       }
+       fclose(fp);
+    坑        : Windows 文件可能是 \r\n 结尾，读入后要清理
+    学习时间  : 半天
+    搜索关键词: "C fgets 二维数组 读文件"
+
+
+▌ 6. 结构体数组的初始化 ⭐⭐（必学）
+    什么      : 用大括号一次性初始化多个结构体
+    为什么    : 15 件物品的数据表用这种方式写最清楚
+    核心语法  :
+       struct Item {
+           char anchor;
+           int  x, y;
+           const char *name;
+           bool taken;
+       };
+
+       Item items[6][3] = {
+           // 序幕
+           {
+               {'A', 14, 12, "折纸星星", false},
+               {'B', 32, 12, "空白日记本", false},
+               {'C', 21, 17, "模糊照片", false},
+           },
+           // 图书馆 ... 后续 5 层
+       };
+    学习时间  : 1-2 小时
+    搜索关键词: "C 结构体数组 初始化 大括号"
+
+
+============================================================
+【W3 第三周 · 必学 · 2 项】
+============================================================
+
+▌ 7. 状态机设计模式 ⭐⭐⭐（这是最重要的一项）
+    什么      : 用 enum + switch 组织程序的"当前在做什么"
+    为什么    : 游戏有很多状态（标题/探索/对话/结局），不能全塞进 main
+    核心结构  :
+       enum GameState { STATE_TITLE, STATE_EXPLORE, STATE_DIALOG, ... };
+       GameState state = STATE_TITLE;
+
+       while (state != STATE_QUIT) {
+           switch (state) {
+               case STATE_TITLE:    updateTitle();    break;
+               case STATE_EXPLORE:  updateExplore();  break;
+               case STATE_DIALOG:   updateDialog();   break;
+           }
+           Sleep(30);
+       }
+    学习时间  : 不用"学"，看几个例子就会。**思维方式**比语法重要
+    搜索关键词: "C 状态机 switch 游戏循环" "finite state machine C"
+
+
+▌ 8. 函数分文件组织（.h / .cpp）⭐⭐（W3 结束前学）
+    什么      : 把不同功能放到不同 .h 和 .cpp 文件
+    为什么    : 单文件写 3000 行会崩溃，必须分模块
+    核心概念  :
+       - .h  头文件: 声明函数（extern）
+       - .cpp 源文件: 实现函数
+       - #include "xxx.h"  在需要用的地方引入
+       - #ifndef / #define / #endif 头文件保护
+    最小例子  :
+       // console.h
+       #ifndef CONSOLE_H
+       #define CONSOLE_H
+       void gotoxy(int x, int y);
+       void setColor(int c);
+       #endif
+
+       // console.cpp
+       #include "console.h"
+       #include <windows.h>
+       void gotoxy(int x, int y) { ... }
+       void setColor(int c) { ... }
+
+       // main.cpp
+       #include "console.h"
+       int main() { gotoxy(10, 5); ... }
+    编译      : g++ main.cpp console.cpp -o game
+                （所有 .cpp 都要编译）
+    学习时间  : 半天
+    搜索关键词: "C++ 头文件 分离编译" "多文件项目 g++"
+
+
+============================================================
+【W5 第五周 · 必学 · 3 项】
+============================================================
+
+▌ 9. 栈的实现（不是 std::stack）⭐⭐（C 大作业考核点）
+    什么      : 用结构体 + 数组实现自己的栈
+    为什么    : 对话历史回看功能。作业要求手写数据结构，不能用 STL
+    核心结构  :
+       #define MAX_STACK 100
+       typedef struct {
+           char items[MAX_STACK][512];  // 每条对话最多 512 字符
+           int  top;                    // 栈顶指针
+       } DialogStack;
+
+       void push(DialogStack *s, const char *text);
+       void pop(DialogStack *s, char *out);
+       bool isEmpty(DialogStack *s);
+    学习时间  : 半天（如果 C 基础课教过，就是复习）
+    搜索关键词: "C 语言 栈 数组实现"
+
+
+▌ 10. 链表的实现（不是 std::list）⭐⭐（C 大作业考核点）
+    什么      : 用结构体 + 指针实现自己的链表
+    为什么    : 物品清单动态增加。作业要求手写
+    核心结构  :
+       typedef struct ItemNode {
+           char name[64];
+           int  sceneIndex;
+           struct ItemNode *next;
+       } ItemNode;
+
+       typedef struct {
+           ItemNode *head;
+           int count;
+       } ItemList;
+
+       void appendItem(ItemList *l, const char *name, int scene);
+       void printList(ItemList *l);
+       void freeList(ItemList *l);
+    坑        : malloc 分配的节点，程序结束前要 free 释放
+    学习时间  : 1 天（如果 C 基础课教过，半天）
+    搜索关键词: "C 链表 malloc 单向链表"
+
+
+▌ 11. 用 GetTickCount 做倒计时 ⭐⭐（必学）
+    什么      : 不用多线程也能实现"每 8 秒 -1"
+    为什么    : 主循环里检查时间差，够 8 秒就扣，累加。不阻塞游戏
+    核心思路  :
+       DWORD lastTick = GetTickCount();
+       int memory = 100;
+
+       // 主循环每帧调用
+       void updateMemory() {
+           DWORD now = GetTickCount();
+           while (now - lastTick >= 8000 && memory > 0) {
+               memory--;
+               lastTick += 8000;   // 注意: 不是 lastTick = now
+           }
+       }
+    关键点    : lastTick 要加 8000，不是设为 now
+                否则读长对话导致的延迟会累积
+    学习时间  : 半天（理解概念 + 调试）
+    搜索关键词: "游戏 帧循环 定时器 累加"
+
+
+============================================================
+【W6-W7 第六~七周 · 必学 · 2 项】
+============================================================
+
+▌ 12. 二进制文件读写（存档）⭐⭐（必学）
+    什么      : 用 fwrite/fread 保存结构体到磁盘
+    为什么    : 通关状态要跨会话保留
+    核心代码  :
+       typedef struct {
+           bool endingA_cleared;
+           bool endingB_cleared;
+           bool endingC_cleared;
+           bool vega_cleared;
+           bool te_cleared;
+       } SaveData;
+
+       // 保存
+       FILE *fp = fopen("save.dat", "wb");   // 注意 "wb" 是二进制
+       fwrite(&save, sizeof(SaveData), 1, fp);
+       fclose(fp);
+
+       // 读取
+       FILE *fp = fopen("save.dat", "rb");
+       if (fp) {
+           fread(&save, sizeof(SaveData), 1, fp);
+           fclose(fp);
+       } else {
+           memset(&save, 0, sizeof(SaveData));  // 新游戏
+       }
+    学习时间  : 1-2 小时
+    搜索关键词: "C fwrite fread 结构体 二进制存档"
+
+
+▌ 13. MCI 音频播放 ⭐⭐⭐（W8 加分项，选学）
+    什么      : 用 Windows 多媒体接口播放 mp3 / wav
+    为什么    : BGM 播放。也可以用 PlaySound() 但只支持 wav
+    核心代码  :
+       #include <windows.h>
+       #pragma comment(lib, "winmm.lib")   // g++ 用 -lwinmm
+
+       mciSendString("open \"bgm/title.mp3\" alias bgm", 0, 0, 0);
+       mciSendString("play bgm repeat", 0, 0, 0);
+       mciSendString("setaudio bgm volume to 500", 0, 0, 0);
+       mciSendString("stop bgm", 0, 0, 0);
+       mciSendString("close bgm", 0, 0, 0);
+    坑        : g++ 编译要加 -lwinmm 才能链接
+    学习时间  : 1 天
+    搜索关键词: "mciSendString mp3 播放" "C++ 播放音乐 winmm"
+
+
+============================================================
+【选学 · 加分项】
+============================================================
+
+▌ 14. 双缓冲防闪烁 ⭐⭐⭐⭐（可选，W8 打磨用）
+    什么      : 用一个"影子屏幕"预先画好，再一次性显示
+    为什么    : 直接刷屏会闪烁
+    简化方案  : 只重画变化的字符（不清屏 + gotoxy 覆盖）
+    学习时间  : 1-2 天
+    搜索关键词: "C++ 控制台 双缓冲 防闪烁"
+
+
+▌ 15. const 修饰符深入 ⭐（选学）
+    什么      : const char * / char *const / const 指针
+    为什么    : 静态数据表要用 const，函数参数要 const
+    学习时间  : 1 小时
+    搜索关键词: "C++ const 用法 三种"
+
+
+▌ 16. 位运算颜色 ⭐（可选）
+    什么      : Windows 颜色可以用 4 位表示 前景+背景
+    为什么    : setColor(FOREGROUND_RED | FOREGROUND_INTENSITY)
+    学习时间  : 半小时
+    搜索关键词: "SetConsoleTextAttribute 颜色码"
+
+
+============================================================
+【按优先级排的学习清单】
+============================================================
+
+★★★ 开工前 3 天必学（花 3 天时间过一遍）：
+  1. Windows 控制台 API（gotoxy / setColor / hideCursor）
+  2. conio.h（_getch / _kbhit）
+  3. UTF-8 编码（SetConsoleOutputCP）
+  4. 二维字符数组 + fgets
+
+★★  W3 之前学：
+  5. 状态机设计模式（enum + switch）
+  6. 分文件编译（.h/.cpp/#include/g++ 多文件）
+  7. 结构体数组初始化
+
+★   W5 之前学（如果 C 课教过就跳过）：
+  8. 栈的手写实现
+  9. 链表的手写实现
+ 10. GetTickCount 倒计时思路
+
+○   W6-W7 学：
+ 11. fwrite/fread 二进制存档
+ 12. mciSendString 播放音乐（选学）
+
+○   W8 加分项：
+ 13. 双缓冲防闪烁
+
+
+============================================================
+【推荐学习资源】
+============================================================
+
+中文资源：
+  - CSDN / 掘金搜关键词
+  - B 站搜 "C 语言 控制台游戏 教程"（有很多做贪吃蛇/俄罗斯方块的视频，
+    跟你的项目 90% 重合）
+
+英文资源（更权威）：
+  - Microsoft Learn (learn.microsoft.com)
+    → 搜 "Console Functions" 有完整 Windows API 文档
+  - cppreference.com
+    → 标准库函数的权威解释
+
+具体推荐：
+  - B 站《C 语言实现贪吃蛇》系列视频
+    这个跟你需要的技术栈几乎完全一致：
+    gotoxy + _getch + 状态机 + 结构体数组
+    看 2-3 个视频，你 W1-W3 需要的东西全懂了
+
+  - Github 搜 "console-game-c" 找几个开源例子看代码
+
+
+============================================================
+【最重要的一句话】
+============================================================
+
+不要把上面全部学完再开工。学法：
+
+  W1 Day 1: 只学第 1-4 项（Windows API + UTF-8）
+  W1 Day 3: 开始写场景加载，边写边学第 5 项（二维数组 fgets）
+  W2:      写 WASD 移动时学第 2 项（键盘）
+  W3:      写对话时学第 6 项（状态机）+ 第 7 项（分文件）
+  ...
+
+  ★ 用到什么学什么，不要提前 3 周把书通读一遍 ★
+  ★ 你不是要考试，是要写游戏 ★
+
+
+============================================================
