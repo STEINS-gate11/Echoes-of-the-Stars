@@ -8,6 +8,9 @@
 
 C 语言大程序设计课程作业，2026 年。
 
+> 🎮 另有 **Ren'Py 视觉小说版**（全 CG、CG 鉴赏室、音乐室、Windows 解压即玩）：
+> [STEINS-gate11/Echoes-RenPy](https://github.com/STEINS-gate11/Echoes-RenPy)
+
 ---
 
 ## 游戏简介
